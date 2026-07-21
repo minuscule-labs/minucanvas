@@ -215,30 +215,30 @@ export function CanvasStyleToolbar<NodeExtra extends Record<string, unknown> = R
         {panel === 'line' ? (
           <div className="minucanvas-style-toolbar__popover minucanvas-style-toolbar__line-panel">
             {STROKE_STYLES.map((style) => (
-              <button key={style} type="button" className={strokeStyle === style ? 'is-active' : ''} onClick={() => updateStyles({ strokeStyle: style }, { strokeStyle: style })}>
-                <span>{style}</span><svg viewBox="0 0 90 16" aria-hidden="true"><path d="M4 8h82" strokeDasharray={style === 'dashed' || style === 'sketch' ? '10 8' : style === 'dotted' ? '2 8' : undefined} /></svg>
+              <button key={style} type="button" className={strokeStyle === style ? 'is-active' : ''} onClick={() => updateStyles({ strokeStyle: style }, { strokeStyle: style })} title={style} aria-label={style}>
+                <svg viewBox="0 0 90 16" aria-hidden="true"><path d="M4 8h82" strokeDasharray={style === 'dashed' || style === 'sketch' ? '10 8' : style === 'dotted' ? '2 8' : undefined} /></svg>
               </button>
             ))}
             {hasEdges ? (
               <>
                 <div className="minucanvas-style-toolbar__divider" />
                 {LINE_ROUTINGS.map((item) => (
-                  <button key={item} type="button" className={routing === item ? 'is-active' : ''} onClick={() => updateStyles({}, { routing: item }, 'edges')}>
-                    <span>{item}</span><svg viewBox="0 0 90 24" aria-hidden="true">{item === 'straight' ? <path d="M8 16L82 8" /> : item === 'curved' ? <path d="M8 16C32 16 48 8 82 8" /> : <path d="M8 16H44V8H82" />}</svg>
+                  <button key={item} type="button" className={routing === item ? 'is-active' : ''} onClick={() => updateStyles({}, { routing: item }, 'edges')} title={item} aria-label={item}>
+                    <svg viewBox="0 0 90 24" aria-hidden="true">{item === 'straight' ? <path d="M8 16L82 8" /> : item === 'curved' ? <path d="M8 16C32 16 48 8 82 8" /> : <path d="M8 16H44V8H82" />}</svg>
                   </button>
                 ))}
                 <div className="minucanvas-style-toolbar__divider" />
                 {ARROW_MODES.map((item) => (
-                  <button key={item.mode} type="button" className={arrowMode === item.mode ? 'is-active' : ''} onClick={() => updateArrowMode(item.mode)}>
-                    <span>{item.label}</span><ArrowModeIcon mode={item.mode} />
+                  <button key={item.mode} type="button" className={arrowMode === item.mode ? 'is-active' : ''} onClick={() => updateArrowMode(item.mode)} title={item.label} aria-label={item.label}>
+                    <ArrowModeIcon mode={item.mode} />
                   </button>
                 ))}
               </>
             ) : null}
             <div className="minucanvas-style-toolbar__divider" />
             {LINE_WIDTHS.map((width) => (
-              <button key={width} type="button" className={strokeWidth === width ? 'is-active' : ''} onClick={() => updateStyles({ strokeWidth: width }, { strokeWidth: width })}>
-                <span>{width === 1 ? 'S' : width === 1.5 ? 'M' : width === 2.5 ? 'L' : 'XL'}</span><svg viewBox="0 0 90 16" aria-hidden="true"><path d="M4 8h82" strokeWidth={width} /></svg>
+              <button key={width} type="button" className={strokeWidth === width ? 'is-active' : ''} onClick={() => updateStyles({ strokeWidth: width }, { strokeWidth: width })} title={`Stroke width ${width}`} aria-label={`Stroke width ${width}`}>
+                <svg viewBox="0 0 90 16" aria-hidden="true"><path d="M4 8h82" strokeWidth={width} /></svg>
               </button>
             ))}
           </div>

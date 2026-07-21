@@ -1163,17 +1163,14 @@
 .minucanvas-style-toolbar__line-panel {
   display: grid;
   gap: 4px;
-  width: 250px;
+  width: 160px;
 }
 
 .minucanvas-style-toolbar__line-panel button {
   display: grid;
-  grid-template-columns: 52px 1fr;
-  gap: 10px;
-  align-items: center;
+  place-items: center;
   min-height: 38px;
   padding: 0 12px;
-  text-align: left;
 }
 
 .minucanvas-style-toolbar__line-panel svg {
