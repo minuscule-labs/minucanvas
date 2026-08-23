@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { JSON_CANVAS_PRESET_COLORS, resolveCanvasColor } from './colors'
 import type {
   CanvasChangeContext,
   CanvasEdgeArrowMode,
@@ -117,6 +118,8 @@ export function CanvasStyleToolbar<NodeExtra extends Record<string, unknown> = R
   const fontSize = mixedValue(selectedNodes.map((node) => node.style?.fontSize ?? 14), 14)
   const fontSizeOption = FONT_SIZES.find((option) => option.value === fontSize)
   const textAlign = mixedValue(selectedNodes.map((node) => node.style?.textAlign ?? 'center'), 'center')
+  const resolvedStroke = resolveCanvasColor(stroke || undefined) ?? '#111827'
+  const resolvedFill = resolveCanvasColor(fill || undefined) ?? 'transparent'
 
   function emit(nextValue: JsonCanvasDocument<NodeExtra, EdgeExtra>, reason: CanvasChangeContext['reason']) {
     onChange(nextValue, { reason })
@@ -128,6 +131,23 @@ export function CanvasStyleToolbar<NodeExtra extends Record<string, unknown> = R
       nodes: value.nodes.map((node) => selection.nodeIds.includes(node.id) ? { ...node, shape: nextShape } : node),
       edges: value.edges,
     }, 'update-node')
+  }
+
+  function updateCanvasColor(color: string) {
+    emit({
+      nodes: value.nodes.map((node) => {
+        if (!selection.nodeIds.includes(node.id)) return node
+        const style = { ...(node.style ?? {}) }
+        delete style.stroke
+        return { ...node, color, style }
+      }),
+      edges: value.edges.map((edge) => {
+        if (!selection.edgeIds.includes(edge.id)) return edge
+        const style = { ...(edge.style ?? {}) }
+        delete style.stroke
+        return { ...edge, color, style }
+      }),
+    }, hasNodes ? 'update-node' : 'update-edge')
   }
 
   function updateArrowMode(mode: CanvasEdgeArrowMode) {
@@ -177,11 +197,17 @@ export function CanvasStyleToolbar<NodeExtra extends Record<string, unknown> = R
 
       <div className="minucanvas-style-toolbar__item">
         <button type="button" className={`minucanvas-style-toolbar__button${panel === 'color' ? ' minucanvas-style-toolbar__button--active' : ''}`} disabled={disabled} onClick={() => setPanel(panel === 'color' ? null : 'color')} title="Colors">
-          <span className="minucanvas-style-toolbar__swatch" style={{ background: fill || 'transparent', borderColor: stroke || '#111827' }} />
+          <span className="minucanvas-style-toolbar__swatch" style={{ background: resolvedFill, borderColor: resolvedStroke }} />
           <span className="minucanvas-style-toolbar__chevron">⌄</span>
         </button>
         {panel === 'color' ? (
           <div className="minucanvas-style-toolbar__popover minucanvas-style-toolbar__color-panel">
+            <div className="minucanvas-style-toolbar__popover-row">
+              <span>JSON Canvas</span>
+              <div className="minucanvas-style-toolbar__palette">
+                {JSON_CANVAS_PRESET_COLORS.map((color) => <button key={color} type="button" title={`JSON Canvas color ${color}`} style={{ background: resolveCanvasColor(color) }} className={stroke === color ? 'is-active' : ''} onClick={() => updateCanvasColor(color)} />)}
+              </div>
+            </div>
             <div className="minucanvas-style-toolbar__popover-row">
               <span>{hasEdges && !hasNodes ? 'Line' : 'Stroke'}</span>
               <div className="minucanvas-style-toolbar__palette">

@@ -10,6 +10,12 @@
   --mc-canvas-muted: #64748b;
   --mc-canvas-accent: #2563eb;
   --mc-canvas-accent-soft: rgba(37, 99, 235, 0.14);
+  --mc-json-canvas-color-1: #dc2626;
+  --mc-json-canvas-color-2: #ea580c;
+  --mc-json-canvas-color-3: #ca8a04;
+  --mc-json-canvas-color-4: #16a34a;
+  --mc-json-canvas-color-5: #0891b2;
+  --mc-json-canvas-color-6: #7c3aed;
   --mc-shape-stroke: #111827;
   --mc-shape-text: #111827;
   --mc-line: #111827;

@@ -86,6 +86,14 @@ type CanvasShape =
 
 `shape: 'text'` renders text without a visible container by default.
 
+### JSON Canvas colors
+
+The standard JSON Canvas preset tokens `"1"` through `"6"` are supported on node and edge `color` fields. They resolve to theme-aware red, orange, yellow, green, cyan, and purple colors while rendering. Explicit CSS colors, including hexadecimal values, remain unchanged.
+
+MinuCanvas preserves preset tokens in the document; it does not replace them with hexadecimal colors during editing or JSON serialization. Standalone SVG and PNG exports resolve presets to concrete light- or dark-mode colors. The same resolver is used by nodes, edges, arrowheads, style-toolbar previews, and exports.
+
+Hosts can customize rendered presets with `--mc-json-canvas-color-1` through `--mc-json-canvas-color-6`. The public `resolveCanvasColor` helper is available for custom UI and renderers.
+
 ### Node style
 
 ```ts

@@ -15,6 +15,7 @@ import {
   type PointerEvent,
   type ReactElement,
 } from 'react'
+import { resolveCanvasColor } from './colors'
 import { anchorForEdgeAnchor, canvasBounds, clientToCanvas, defaultEdgeAnchorForSide, defaultEdgeConnection, edgeAnchorForPoint, edgeLabelPoint, edgePath, edgeRoutePoints, moveOrthogonalRouteSegment, nodeCenter, sideForPoint, type Point } from './geometry'
 import { layoutMindMap } from './mindmap'
 import {
@@ -195,9 +196,9 @@ function nodeStyle(node: CanvasNode): CSSProperties {
     top: node.y,
     width: node.width,
     height: node.height,
-    '--mc-node-fill': style.fill ?? node.background,
-    '--mc-node-stroke': style.stroke ?? node.color,
-    '--mc-node-text': style.text,
+    '--mc-node-fill': resolveCanvasColor(style.fill ?? node.background),
+    '--mc-node-stroke': resolveCanvasColor(style.stroke ?? node.color),
+    '--mc-node-text': resolveCanvasColor(style.text),
     '--mc-node-stroke-width': style.strokeWidth ? `${style.strokeWidth}px` : undefined,
     '--mc-node-stroke-style': style.strokeStyle === 'dashed' || style.strokeStyle === 'sketch' ? 'dashed' : style.strokeStyle === 'dotted' ? 'dotted' : undefined,
     '--mc-node-stroke-dasharray': style.strokeStyle === 'dashed' || style.strokeStyle === 'sketch' ? '10 8' : style.strokeStyle === 'dotted' ? '2 8' : undefined,
@@ -228,12 +229,16 @@ function edgeDash(edge: CanvasEdge): string | undefined {
   return undefined
 }
 
+function edgeMarkerId(edge: CanvasEdge): string {
+  return `minucanvas-arrow-${encodeURIComponent(edge.id)}`
+}
+
 function edgeMarkerStart(edge: CanvasEdge): string | undefined {
-  return (edge.fromEnd ?? 'none') === 'arrow' ? 'url(#minucanvas-arrow)' : undefined
+  return (edge.fromEnd ?? 'none') === 'arrow' ? `url(#${edgeMarkerId(edge)})` : undefined
 }
 
 function edgeMarkerEnd(edge: CanvasEdge): string | undefined {
-  return (edge.toEnd ?? 'arrow') === 'arrow' ? 'url(#minucanvas-arrow)' : undefined
+  return (edge.toEnd ?? 'arrow') === 'arrow' ? `url(#${edgeMarkerId(edge)})` : undefined
 }
 
 function isUrlText(value: string): boolean {
@@ -370,10 +375,10 @@ function svgText(
   return `<text fill="${options.color}" font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="${options.fontSize}" font-weight="${options.fontWeight}" text-anchor="${options.textAnchor}" dominant-baseline="middle">${tspans}</text>`
 }
 
-function svgShapeForNode(node: CanvasNode, defaultColor: string): string {
+function svgShapeForNode(node: CanvasNode, defaultColor: string, colorMode: ExportColorMode): string {
   const style = node.style ?? {}
-  const fill = style.fill ?? node.background ?? 'transparent'
-  const stroke = style.stroke ?? node.color ?? defaultColor
+  const fill = resolveCanvasColor(style.fill ?? node.background, colorMode) ?? 'transparent'
+  const stroke = resolveCanvasColor(style.stroke ?? node.color, colorMode) ?? defaultColor
   const strokeWidth = style.strokeWidth ?? 1.5
   const dash = style.strokeStyle === 'dashed' || style.strokeStyle === 'sketch' ? ' stroke-dasharray="10 8"' : style.strokeStyle === 'dotted' ? ' stroke-dasharray="2 8"' : ''
   if (node.type === 'image') return `<image href="${escapeXml(node.file ?? node.url ?? '')}" x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" preserveAspectRatio="xMidYMid meet" />`
@@ -1558,8 +1563,8 @@ function MinuCanvasInner<NodeExtra extends Record<string, unknown> = Record<stri
     const markerMarkup = exportDocument.edges
       .filter((edge) => (edge.fromEnd ?? 'none') === 'arrow' || (edge.toEnd ?? 'arrow') === 'arrow')
       .map((edge) => {
-        const stroke = edge.style?.stroke ?? edge.color ?? defaultColor
-        return `<marker id="arrow-${escapeXml(edge.id)}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${stroke}" /></marker>`
+        const stroke = resolveCanvasColor(edge.style?.stroke ?? edge.color, options.colorMode) ?? defaultColor
+        return `<marker id="arrow-${escapeXml(edge.id)}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${escapeXml(stroke)}" /></marker>`
       })
       .join('\n')
     const edgeMarkup = exportDocument.edges.map((edge) => {
@@ -1567,7 +1572,7 @@ function MinuCanvasInner<NodeExtra extends Record<string, unknown> = Record<stri
       const toNode = nodes.get(edge.toNode)
       const path = renderedEdgePath(edge, fromNode, toNode)
       if (!path) return ''
-      const stroke = edge.style?.stroke ?? edge.color ?? defaultColor
+      const stroke = resolveCanvasColor(edge.style?.stroke ?? edge.color, options.colorMode) ?? defaultColor
       const strokeWidth = edge.style?.strokeWidth ?? 1.5
       const dash = edgeDash(edge) ? ` stroke-dasharray="${edgeDash(edge)}"` : ''
       const markerStart = (edge.fromEnd ?? 'none') === 'arrow' ? ` marker-start="url(#arrow-${escapeXml(edge.id)})"` : ''
@@ -1576,12 +1581,12 @@ function MinuCanvasInner<NodeExtra extends Record<string, unknown> = Record<stri
       const label = edge.label && labelPoint
         ? svgText(edge.label, labelPoint.x, labelPoint.y, { color: defaultColor, fontSize: 12, fontWeight: 500, textAnchor: 'middle' })
         : ''
-      return `<path d="${path}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${dash}${markerStart}${markerEnd} />\n${label}`
+      return `<path d="${path}" fill="none" stroke="${escapeXml(stroke)}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${dash}${markerStart}${markerEnd} />\n${label}`
     }).join('\n')
     const nodeMarkup = exportDocument.nodes.map((node) => {
-      const shape = svgShapeForNode(node, defaultColor)
+      const shape = svgShapeForNode(node, defaultColor, options.colorMode)
       const label = nodeLabel(node)
-      const textColor = node.style?.text ?? defaultColor
+      const textColor = resolveCanvasColor(node.style?.text, options.colorMode) ?? defaultColor
       const fontSize = node.style?.fontSize ?? 14
       const fontWeight = node.style?.fontWeight ?? 500
       const textAnchor: 'start' | 'middle' | 'end' = node.style?.textAlign === 'left' ? 'start' : node.style?.textAlign === 'right' ? 'end' : 'middle'
@@ -2714,6 +2719,13 @@ ${nodeMarkup}
             <marker id="minucanvas-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" />
             </marker>
+            {value.edges
+              .filter((edge) => (edge.fromEnd ?? 'none') === 'arrow' || (edge.toEnd ?? 'arrow') === 'arrow')
+              .map((edge) => (
+                <marker key={edge.id} id={edgeMarkerId(edge)} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" style={{ fill: resolveCanvasColor(edge.style?.stroke ?? edge.color) ?? 'var(--mc-line, var(--mc-edge, #111827))' }} />
+                </marker>
+              ))}
           </defs>
           {value.edges.map((edge) => {
             const fromNode = nodeById.get(edge.fromNode)
@@ -2722,8 +2734,13 @@ ${nodeMarkup}
             if (!path) return null
             const selected = selection.edgeIds.includes(edge.id)
             const strokeStyle = edge.style?.strokeStyle
+            const resolvedStroke = resolveCanvasColor(edge.style?.stroke ?? edge.color)
+            const edgeRenderStyle = {
+              '--mc-edge-stroke': resolvedStroke,
+              '--mc-edge-stroke-width': edge.style?.strokeWidth ? `${edge.style.strokeWidth}px` : undefined,
+            } as CSSProperties
             return (
-              <g key={edge.id} className={`minucanvas-edge${selected ? ' minucanvas-edge--selected' : ''}${strokeStyle === 'sketch' ? ' minucanvas-edge--sketch' : ''}`}>
+              <g key={edge.id} className={`minucanvas-edge${selected ? ' minucanvas-edge--selected' : ''}${strokeStyle === 'sketch' ? ' minucanvas-edge--sketch' : ''}`} style={edgeRenderStyle}>
                 {strokeStyle === 'sketch' ? <path className="minucanvas-edge__sketch-shadow" d={path} /> : null}
                 <path
                   className="minucanvas-edge__hit-area"
@@ -2752,8 +2769,6 @@ ${nodeMarkup}
                 <path
                   className="minucanvas-edge__path"
                   d={path}
-                  stroke={edge.style?.stroke ?? edge.color}
-                  strokeWidth={edge.style?.strokeWidth}
                   strokeDasharray={edgeDash(edge)}
                   opacity={edge.style?.opacity}
                   markerStart={edgeMarkerStart(edge)}

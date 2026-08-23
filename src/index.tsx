@@ -2,6 +2,8 @@
 // Public API — exported from here
 
 export { CanvasToolbar } from './CanvasToolbar'
+export { JSON_CANVAS_PRESET_COLORS, isJsonCanvasPresetColor, resolveCanvasColor } from './colors'
+export type { CanvasColorMode, JsonCanvasPresetColor } from './colors'
 export { CanvasStyleToolbar } from './CanvasStyleToolbar'
 export { MinuCanvas } from './MinuCanvas'
 export {

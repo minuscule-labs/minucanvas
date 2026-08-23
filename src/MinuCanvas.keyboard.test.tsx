@@ -92,6 +92,36 @@ describe('MinuCanvas linked nodes', () => {
   })
 })
 
+describe('MinuCanvas JSON Canvas colors', () => {
+  it('resolves presets for nodes and edges without changing document tokens', () => {
+    const ref = createRef<CanvasHandle>()
+    const document: JsonCanvasDocument = {
+      nodes: [
+        createCanvasNode({ id: 'A', text: 'A', x: 0, y: 0, width: 120, height: 80, color: '1', style: { fill: '2', text: '3' } }),
+        createCanvasNode({ id: 'B', text: 'B', x: 260, y: 0, width: 120, height: 80 }),
+      ],
+      edges: [{ id: 'preset-edge', fromNode: 'A', toNode: 'B', color: '5' }],
+    }
+    const view = render(<MinuCanvas ref={ref} value={document} onChange={() => {}} canvasTheme="dark" />)
+
+    const nodeStyle = view.container.querySelector<HTMLElement>('[data-minucanvas-node-id="A"]')!.getAttribute('style')!
+    expect(nodeStyle).toContain('--mc-node-stroke: var(--mc-json-canvas-color-1')
+    expect(nodeStyle).toContain('--mc-node-fill: var(--mc-json-canvas-color-2')
+    expect(nodeStyle).toContain('--mc-node-text: var(--mc-json-canvas-color-3')
+    const edgeStyle = view.container.querySelector<SVGGElement>('[data-minucanvas-edge-id="preset-edge"]')!.parentElement!.getAttribute('style')!
+    expect(edgeStyle).toContain('--mc-edge-stroke: var(--mc-json-canvas-color-5')
+    expect(view.container.querySelector<SVGMarkerElement>('#minucanvas-arrow-preset-edge path')!.getAttribute('style')).toContain('--mc-json-canvas-color-5')
+
+    const svg = ref.current!.exportSvg()
+    expect(svg).toContain('stroke="#f87171"')
+    expect(svg).toContain('fill="#fb923c"')
+    expect(svg).toContain('fill="#facc15"')
+    expect(svg).toContain('stroke="#22d3ee"')
+    expect(ref.current!.getDocument().nodes[0]?.color).toBe('1')
+    expect(ref.current!.getDocument().edges[0]?.color).toBe('5')
+  })
+})
+
 describe('MinuCanvas connector arrowheads', () => {
   it('renders independent start and end markers with backwards-compatible defaults', () => {
     const document: JsonCanvasDocument = {
@@ -109,11 +139,11 @@ describe('MinuCanvas connector arrowheads', () => {
     const path = (id: string) => view.container.querySelector<SVGPathElement>(`[data-minucanvas-edge-id="${id}"] + .minucanvas-edge__path`)!
 
     expect(path('default').getAttribute('marker-start')).toBeNull()
-    expect(path('default').getAttribute('marker-end')).toBe('url(#minucanvas-arrow)')
-    expect(path('start').getAttribute('marker-start')).toBe('url(#minucanvas-arrow)')
+    expect(path('default').getAttribute('marker-end')).toBe('url(#minucanvas-arrow-default)')
+    expect(path('start').getAttribute('marker-start')).toBe('url(#minucanvas-arrow-start)')
     expect(path('start').getAttribute('marker-end')).toBeNull()
-    expect(path('both').getAttribute('marker-start')).toBe('url(#minucanvas-arrow)')
-    expect(path('both').getAttribute('marker-end')).toBe('url(#minucanvas-arrow)')
+    expect(path('both').getAttribute('marker-start')).toBe('url(#minucanvas-arrow-both)')
+    expect(path('both').getAttribute('marker-end')).toBe('url(#minucanvas-arrow-both)')
   })
 
   it('exports start and end arrowheads to SVG', () => {
