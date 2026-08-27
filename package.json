@@ -1,6 +1,6 @@
 {
   "name": "@dpklabs/minucanvas",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Reusable React canvas editor built around JSON Canvas for simple diagrams and extensible app canvases",
   "type": "module",
   "main": "./dist/index.cjs",
