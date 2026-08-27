@@ -1,9 +1,10 @@
 import type { CanvasEdgeRouting, CanvasEdgeStyle, CanvasNodeStyle, CanvasStrokeStyle } from '../types'
-import type { MinuDiagramConnectionOperator, MinuDiagramDiagnostic, MinuDiagramGroup, MinuDiagramNode, ParsedMinuDiagram } from './types'
+import type { MinuDiagramConnectionOperator, MinuDiagramDiagnostic, MinuDiagramGroup, MinuDiagramNode, MinuDiagramParseOptions, ParsedMinuDiagram } from './types'
 
 const CONNECTION_OPERATORS: MinuDiagramConnectionOperator[] = ['-->', '<>', '--', '>', '<', '-']
 const EDGE_ROUTINGS = ['elbow', 'straight', 'curved'] as const
 const EDGE_STROKE_STYLES = ['solid', 'dashed', 'dotted', 'sketch'] as const
+const DIAGNOSTIC_SOURCE_LIMIT = 240
 
 interface ParseLine {
   text: string
@@ -135,6 +136,103 @@ function splitConnectionTokens(text: string): Array<string | MinuDiagramConnecti
   return tokens
 }
 
+function findUnsupportedOperator(text: string): { operator: string; column: number } | null {
+  let quoted = false
+  let bracketDepth = 0
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (char === '"' && text[i - 1] !== '\\') quoted = !quoted
+    if (!quoted && char === '[') bracketDepth += 1
+    if (!quoted && char === ']') bracketDepth = Math.max(0, bracketDepth - 1)
+    if (quoted || bracketDepth > 0) continue
+    if (text.slice(i, i + 3) === '-->') {
+      i += 2
+      continue
+    }
+    if (text.slice(i, i + 2) === '->') return { operator: '->', column: i + 1 }
+  }
+  return null
+}
+
+function delimiterError(text: string): string | null {
+  let quoted = false
+  let bracketDepth = 0
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (char === '"' && text[i - 1] !== '\\') quoted = !quoted
+    if (quoted) continue
+    if (char === '[') {
+      bracketDepth += 1
+      if (bracketDepth > 1) return 'Nested property brackets are not supported.'
+    }
+    if (char === ']') {
+      bracketDepth -= 1
+      if (bracketDepth < 0) return 'Unexpected closing property bracket.'
+    }
+  }
+  if (quoted) return 'Unterminated quoted string.'
+  if (bracketDepth > 0) return 'Unclosed property bracket.'
+  return null
+}
+
+function findTopLevelOpeningBracket(text: string): number {
+  let quoted = false
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (char === '"' && text[i - 1] !== '\\') quoted = !quoted
+    if (!quoted && char === '[') return i
+  }
+  return -1
+}
+
+function propertyError(text: string): string | null {
+  const bracketIndex = findTopLevelOpeningBracket(text)
+  if (bracketIndex === -1) return null
+  if (!text.trim().endsWith(']')) return 'Property blocks must appear at the end of a statement.'
+  const trimmedEnd = text.trimEnd().length - 1
+  let quoted = false
+  for (let i = bracketIndex + 1; i <= trimmedEnd; i += 1) {
+    if (text[i] === '"' && text[i - 1] !== '\\') quoted = !quoted
+    if (!quoted && text[i] === ']' && i !== trimmedEnd) return 'Only one trailing property block is allowed.'
+  }
+  const body = text.slice(bracketIndex + 1, trimmedEnd)
+  if (!body.trim()) return 'Property blocks cannot be empty.'
+  if (body.trimEnd().endsWith(',')) return 'Property blocks cannot end with a comma.'
+  for (const part of splitTopLevel(body, ',')) {
+    const index = part.indexOf(':')
+    if (index <= 0 || !part.slice(index + 1).trim()) return `Invalid property "${part}". Expected key: value.`
+  }
+  return null
+}
+
+function isQuoted(value: string): boolean {
+  const trimmed = value.trim()
+  return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
+}
+
+function hasAmbiguousBareId(value: string): boolean {
+  return splitTopLevel(value, ',').some((part) => !isQuoted(part) && /\s/.test(part.trim()))
+}
+
+function explicitDeclarationSuggestion(text: string): string {
+  const match = text.match(/^node\s+([^\s"]+)\s+"([^"]+)"(?:\s+shape\s+([^\s]+))?$/i)
+  if (!match) return 'Use canonical syntax: Id [label: "Display label", shape: card]'
+  const shape = match[3] ? `, shape: ${match[3]}` : ''
+  return `Use: ${match[1]} [label: "${match[2]}"${shape}]`
+}
+
+function diagnostic(entry: ParseLine, code: MinuDiagramDiagnostic['code'], message: string, suggestion?: string, column?: number): MinuDiagramDiagnostic {
+  return {
+    severity: 'error',
+    code,
+    message,
+    line: entry.line,
+    column,
+    source: entry.text.slice(0, DIAGNOSTIC_SOURCE_LIMIT).replace(/[\u0000-\u001f\u007f]/g, '?'),
+    suggestion,
+  }
+}
+
 function propsToNode(id: string, props: Record<string, string>, groupId: string | undefined, line: number): MinuDiagramNode {
   const style = styleFromProps(props)
   return {
@@ -173,26 +271,55 @@ function normalizeLines(source: string): ParseLine[] {
   return source.split(/\r?\n/).map((line, index) => ({ text: stripComment(line).trim(), line: index + 1 })).filter((line) => line.text.length > 0)
 }
 
-export function parseMinuDiagramSyntax(source: string): ParsedMinuDiagram {
+export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParseOptions = {}): ParsedMinuDiagram {
   const diagnostics: MinuDiagramDiagnostic[] = []
   const nodes = new Map<string, MinuDiagramNode>()
   const groups = new Map<string, MinuDiagramGroup>()
   const connections: ParsedMinuDiagram['connections'] = []
-  const groupStack: string[] = []
+  const groupStack: Array<{ id: string; entry: ParseLine }> = []
   const defaults: ParsedMinuDiagram['defaults'] = {}
+  let diagramEntry: ParseLine | undefined
   let title: string | undefined
   let direction: ParsedMinuDiagram['direction'] = 'down'
   let layout: ParsedMinuDiagram['layout']
+  const currentGroupId = () => groupStack.at(-1)?.id
 
   for (const entry of normalizeLines(source)) {
     let text = entry.text
-    const diagramMatch = text.match(/^diagram\s+(?:"([^"]+)"|([^\s{]+))\s*\{?$/i)
+    const unsupportedOperator = findUnsupportedOperator(text)
+    if (unsupportedOperator) {
+      diagnostics.push(diagnostic(
+        entry,
+        'unsupported_operator',
+        `Unsupported connection operator "${unsupportedOperator.operator}".`,
+        'Use ">" for a directed connection, for example: A > B',
+        unsupportedOperator.column,
+      ))
+      continue
+    }
+
+    if (options.strict) {
+      const delimiter = delimiterError(text)
+      if (delimiter) {
+        diagnostics.push(diagnostic(entry, 'invalid_properties', delimiter, 'Use a balanced quoted string and a trailing [key: value] property block.'))
+        continue
+      }
+    }
+
+    const diagramMatch = text.match(/^diagram\s+(?:"([^"]+)"|([^\s{]+))\s*(\{)?$/i)
     if (diagramMatch) {
+      if (options.strict && diagramEntry) {
+        diagnostics.push(diagnostic(entry, 'unsupported_statement', 'Nested or repeated diagram declarations are not supported.'))
+        continue
+      }
       title = diagramMatch[1] ?? diagramMatch[2]
+      if (diagramMatch[3]) diagramEntry = entry
       continue
     }
     if (text === '}') {
-      groupStack.pop()
+      if (groupStack.length > 0) groupStack.pop()
+      else if (diagramEntry) diagramEntry = undefined
+      else if (options.strict) diagnostics.push(diagnostic(entry, 'unmatched_group', 'Unmatched closing brace.', 'Remove the brace or add a matching group declaration.'))
       continue
     }
 
@@ -214,49 +341,118 @@ export function parseMinuDiagramSyntax(source: string): ParsedMinuDiagram {
       continue
     }
 
+    if (options.strict && /^(diagram|direction|layout|colorMode|styleMode|typeface)(?:\s|$)/i.test(text)) {
+      diagnostics.push(diagnostic(entry, 'invalid_directive', 'Invalid diagram directive or value.', 'Use a documented directive value, such as "direction right" or "layout flow".'))
+      continue
+    }
+
+    if (options.strict && /^(node|edge|group)(?:\s|$)/i.test(text)) {
+      diagnostics.push(diagnostic(
+        entry,
+        'unsupported_statement',
+        'Unsupported explicit declaration.',
+        text.toLowerCase().startsWith('node ') ? explicitDeclarationSuggestion(text) : 'Use canonical node, group, or connection syntax.',
+      ))
+      continue
+    }
+
     if (text.endsWith('{')) {
       text = text.slice(0, -1).trim()
+      if (options.strict) {
+        const properties = propertyError(text)
+        if (properties) {
+          diagnostics.push(diagnostic(entry, 'invalid_properties', properties))
+          continue
+        }
+      }
       const { text: groupNameSource, props } = readTrailingProperties(text)
       const id = unquote(groupNameSource)
       if (!id) {
-        diagnostics.push({ severity: 'error', message: 'Group name is required.', line: entry.line })
+        diagnostics.push(diagnostic(entry, 'unmatched_group', 'Group name is required.', 'Use: GroupName {'))
         continue
       }
-      groups.set(id, { id, label: props.label, color: props.color, style: styleFromProps(props), parentGroupId: groupStack.at(-1), line: entry.line })
-      groupStack.push(id)
+      if (options.strict && hasAmbiguousBareId(groupNameSource)) {
+        diagnostics.push(diagnostic(entry, 'unsupported_statement', 'Unquoted multiword group IDs are ambiguous.', 'Quote the group ID or use a single bare ID with a label property.'))
+        continue
+      }
+      groups.set(id, { id, label: props.label, color: props.color, style: styleFromProps(props), parentGroupId: currentGroupId(), line: entry.line })
+      groupStack.push({ id, entry })
       continue
     }
 
     if (findConnectionOperator(text)) {
+      if (options.strict) {
+        const properties = propertyError(text)
+        if (properties) {
+          diagnostics.push(diagnostic(entry, 'invalid_properties', properties))
+          continue
+        }
+      }
       const { text: withoutProps, props } = readTrailingProperties(text)
       const colonIndex = findTopLevelColon(withoutProps)
       const expression = colonIndex === -1 ? withoutProps : withoutProps.slice(0, colonIndex).trim()
-      const label = colonIndex === -1 ? undefined : unquote(withoutProps.slice(colonIndex + 1).trim())
+      const labelSource = colonIndex === -1 ? undefined : withoutProps.slice(colonIndex + 1).trim()
+      const label = labelSource === undefined ? undefined : unquote(labelSource)
       const tokens = splitConnectionTokens(expression)
+      const malformed = tokens.length < 3 || tokens.length % 2 === 0
+        || tokens.some((token, index) => index % 2 === 0 ? CONNECTION_OPERATORS.includes(token as MinuDiagramConnectionOperator) : !CONNECTION_OPERATORS.includes(token as MinuDiagramConnectionOperator))
+      const ambiguousOperand = tokens.some((token, index) => index % 2 === 0 && hasAmbiguousBareId(token))
+      if (options.strict && (malformed || ambiguousOperand || labelSource === '')) {
+        diagnostics.push(diagnostic(
+          entry,
+          'malformed_connection',
+          ambiguousOperand ? 'Unquoted multiword connection IDs are ambiguous.' : 'Malformed connection statement.',
+          'Use complete canonical connections, for example: A > B or "Node A" > B.',
+        ))
+        continue
+      }
+      if (malformed) continue
+      const edgeStyle = edgeStyleFromProps(props, diagnostics, entry.line)
       for (let i = 0; i < tokens.length - 2; i += 2) {
-        const left = tokens[i]
-        const op = tokens[i + 1]
-        const right = tokens[i + 2]
-        if (typeof left !== 'string' || typeof op !== 'string' || typeof right !== 'string') continue
-        const leftIds = splitTopLevel(left, ',').map(unquote)
-        const rightIds = splitTopLevel(right, ',').map(unquote)
+        const leftIds = splitTopLevel(tokens[i], ',').map(unquote)
+        const op = tokens[i + 1] as MinuDiagramConnectionOperator
+        const rightIds = splitTopLevel(tokens[i + 2], ',').map(unquote)
         for (const from of leftIds) {
           for (const to of rightIds) {
-            connections.push({ from, to, operator: op as MinuDiagramConnectionOperator, label, color: props.color, style: edgeStyleFromProps(props, diagnostics, entry.line), line: entry.line })
-            ensureNode(nodes, from, groupStack.at(-1), entry.line)
-            ensureNode(nodes, to, groupStack.at(-1), entry.line)
+            connections.push({ from, to, operator: op, label, color: props.color, style: edgeStyle, line: entry.line })
+            ensureNode(nodes, from, currentGroupId(), entry.line)
+            ensureNode(nodes, to, currentGroupId(), entry.line)
           }
         }
       }
       continue
     }
 
+    if (options.strict) {
+      const properties = propertyError(text)
+      if (properties) {
+        diagnostics.push(diagnostic(entry, 'invalid_properties', properties))
+        continue
+      }
+    }
     const { text: idSource, props } = readTrailingProperties(text)
+    if (options.strict && hasAmbiguousBareId(idSource)) {
+      diagnostics.push(diagnostic(
+        entry,
+        'unsupported_statement',
+        'Unquoted multiword node IDs are ambiguous.',
+        'Quote the ID or use a single bare ID with properties, for example: upload [label: "Bulk feed upload"].',
+      ))
+      continue
+    }
     for (const idPart of splitTopLevel(idSource, ',')) {
       const id = unquote(idPart)
       if (!id) continue
-      nodes.set(id, { ...ensureNode(nodes, id, groupStack.at(-1), entry.line), ...propsToNode(id, props, groupStack.at(-1), entry.line) })
+      nodes.set(id, { ...ensureNode(nodes, id, currentGroupId(), entry.line), ...propsToNode(id, props, currentGroupId(), entry.line) })
     }
+  }
+
+  if (options.strict) {
+    for (const group of groupStack) {
+      diagnostics.push(diagnostic(group.entry, 'unmatched_group', `Group "${group.id}" is missing a closing brace.`, 'Add a closing "}" after the group contents.'))
+      groups.delete(group.id)
+    }
+    if (diagramEntry) diagnostics.push(diagnostic(diagramEntry, 'unmatched_group', 'Diagram block is missing a closing brace.', 'Add a closing "}" after the diagram contents.'))
   }
 
   return { title, direction, layout, nodes: [...nodes.values()], groups: [...groups.values()], connections, defaults, diagnostics }

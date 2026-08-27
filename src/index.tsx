@@ -70,11 +70,13 @@ export type {
   MinuDiagramConnection,
   MinuDiagramConnectionOperator,
   MinuDiagramDiagnostic,
+  MinuDiagramDiagnosticCode,
   MinuDiagramDiagnosticSeverity,
   MinuDiagramDirection,
   MinuDiagramGroup,
   MinuDiagramLayout,
   MinuDiagramNode,
+  MinuDiagramParseOptions,
   ParsedMinuDiagram,
   SupportedMinuDiagramShape,
 } from './syntax'

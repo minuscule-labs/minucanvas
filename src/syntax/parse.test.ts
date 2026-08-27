@@ -43,9 +43,121 @@ describe('parseMinuDiagramSyntax', () => {
     expect(parsed.groups[0]).toMatchObject({ id: 'Backend', label: 'Backend services' })
     expect(parsed.nodes.find((node) => node.id === 'API')?.groupId).toBe('Backend')
   })
+
+  it('rejects unsupported compound operators atomically in both modes', () => {
+    for (const strict of [false, true]) {
+      const parsed = parseMinuDiagramSyntax('A -> B', { strict })
+
+      expect(parsed.diagnostics).toEqual([
+        expect.objectContaining({
+          severity: 'error',
+          code: 'unsupported_operator',
+          line: 1,
+          column: 3,
+          source: 'A -> B',
+        }),
+      ])
+      expect(parsed.nodes).toEqual([])
+      expect(parsed.connections).toEqual([])
+    }
+  })
+
+  it('rejects unsupported declarations in strict mode without adding nodes', () => {
+    const parsed = parseMinuDiagramSyntax('node upload "Bulk feed upload" shape card', { strict: true })
+
+    expect(parsed.diagnostics[0]).toMatchObject({
+      severity: 'error',
+      code: 'unsupported_statement',
+      line: 1,
+      source: 'node upload "Bulk feed upload" shape card',
+    })
+    expect(parsed.diagnostics[0]?.suggestion).toContain('upload [label:')
+    expect(parsed.nodes).toEqual([])
+  })
+
+  it('collects independent strict diagnostics while preserving valid lines', () => {
+    const parsed = parseMinuDiagramSyntax(`Valid > Done
+node upload "Bulk feed upload" shape card
+Bad -> Worse
+direction sideways`, { strict: true })
+
+    expect(parsed.diagnostics.map((item) => item.code)).toEqual([
+      'unsupported_statement',
+      'unsupported_operator',
+      'invalid_directive',
+    ])
+    expect(parsed.nodes.map((node) => node.id)).toEqual(['Valid', 'Done'])
+    expect(parsed.connections).toHaveLength(1)
+  })
+
+  it('rejects malformed strict statements without adding their artifacts', () => {
+    const cases = [
+      ['A >', 'malformed_connection'],
+      ['A > > B', 'malformed_connection'],
+      ['Unquoted node name', 'unsupported_statement'],
+      ['A [shape card]', 'invalid_properties'],
+      ['A [shape: card', 'invalid_properties'],
+      ['A [shape: card,]', 'invalid_properties'],
+      ['A [label: [nested]]', 'invalid_properties'],
+      ['A [shape: card] [color: blue]', 'invalid_properties'],
+      ['}', 'unmatched_group'],
+    ] as const
+
+    for (const [source, code] of cases) {
+      const parsed = parseMinuDiagramSyntax(source, { strict: true })
+      expect(parsed.diagnostics[0]?.code, source).toBe(code)
+      expect(parsed.nodes, source).toEqual([])
+      expect(parsed.groups, source).toEqual([])
+      expect(parsed.connections, source).toEqual([])
+    }
+  })
+
+  it('reports unclosed groups and removes the incomplete group artifact', () => {
+    const parsed = parseMinuDiagramSyntax('Backend {\nAPI', { strict: true })
+
+    expect(parsed.diagnostics).toContainEqual(expect.objectContaining({ code: 'unmatched_group', line: 1 }))
+    expect(parsed.groups).toEqual([])
+  })
+
+  it('keeps operators in quotes, properties, URLs, and comments out of validation', () => {
+    const parsed = parseMinuDiagramSyntax(`
+      "A -> label" [url: "https://example.com/a->b"]
+      A > B: "shows -> text"
+      C > D // ignored -> operator
+    `, { strict: true })
+
+    expect(parsed.diagnostics).toEqual([])
+    expect(parsed.nodes.map((node) => node.id)).toContain('A -> label')
+    expect(parsed.connections).toHaveLength(2)
+  })
+
+  it('accepts canonical diagrams, groups, chains, and supported operators in strict mode', () => {
+    const parsed = parseMinuDiagramSyntax(`
+      diagram "Strict flow" {
+        direction right
+        Backend [label: "Backend services"] {
+          "API service" [shape: card]
+          DB
+          "API service" > DB --> Archive
+        }
+      }
+    `, { strict: true })
+
+    expect(parsed.diagnostics).toEqual([])
+    expect(parsed.groups).toHaveLength(1)
+    expect(parsed.nodes).toHaveLength(3)
+    expect(parsed.connections).toHaveLength(2)
+  })
 })
 
 describe('compileMinuDiagramSyntax', () => {
+  it('forwards strict mode to the parser', () => {
+    const result = compileMinuDiagramSyntax('node upload "Bulk feed upload" shape card', { strict: true })
+
+    expect(result.diagnostics[0]?.code).toBe('unsupported_statement')
+    expect(result.document.nodes).toEqual([])
+  })
+
   it('compiles flow syntax to MinuCanvas JSON', () => {
     const result = compileMinuDiagramSyntax(`
       direction right

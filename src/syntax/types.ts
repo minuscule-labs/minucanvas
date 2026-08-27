@@ -4,11 +4,27 @@ import type { CanvasEdgeStyle, CanvasNodeStyle, CanvasShape, JsonCanvasDocument 
 export type MinuDiagramDirection = 'down' | 'up' | 'right' | 'left'
 export type MinuDiagramLayout = 'flow' | 'mindmap'
 export type MinuDiagramDiagnosticSeverity = 'warning' | 'error'
+export type MinuDiagramDiagnosticCode =
+  | 'unsupported_statement'
+  | 'unsupported_operator'
+  | 'malformed_connection'
+  | 'invalid_properties'
+  | 'invalid_directive'
+  | 'unmatched_group'
 
 export interface MinuDiagramDiagnostic {
   severity: MinuDiagramDiagnosticSeverity
+  code?: MinuDiagramDiagnosticCode | undefined
   message: string
   line?: number | undefined
+  column?: number | undefined
+  source?: string | undefined
+  suggestion?: string | undefined
+}
+
+export interface MinuDiagramParseOptions {
+  /** Reject ambiguous or unsupported statements instead of treating them as bare node IDs. */
+  strict?: boolean | undefined
 }
 
 export interface MinuDiagramNode {
@@ -62,7 +78,7 @@ export interface ParsedMinuDiagram {
   diagnostics: MinuDiagramDiagnostic[]
 }
 
-export interface MinuDiagramCompileOptions {
+export interface MinuDiagramCompileOptions extends MinuDiagramParseOptions {
   origin?: { x: number; y: number }
   nodeGap?: number
   rankGap?: number

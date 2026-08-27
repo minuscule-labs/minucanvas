@@ -130,6 +130,8 @@ Eraser-style operators are concise and LLM-friendly. We should support them:
 | `A -- B` | dotted/dashed plain line |
 | `A --> B` | dashed arrow |
 
+Operators are tokenized atomically. The common `A -> B` spelling is not supported; use canonical `A > B`. It produces an `unsupported_operator` error rather than being split into a line and a literal `>` node.
+
 Labels:
 
 ```txt
@@ -364,11 +366,19 @@ The compiler should produce:
 ```ts
 type CompileResult = {
   document: JsonCanvasDocument
-  diagnostics: Array<{ severity: 'warning' | 'error'; message: string; line?: number }>
+  diagnostics: Array<{
+    severity: 'warning' | 'error'
+    code?: MinuDiagramDiagnosticCode
+    message: string
+    line?: number
+    column?: number
+    source?: string
+    suggestion?: string
+  }>
 }
 ```
 
-Diagnostics should warn on unsupported properties/shapes rather than failing whenever possible.
+Diagnostics should warn on unsupported properties/shapes rather than failing whenever possible. Hosts must not persist or apply `document` when any diagnostic has `severity: 'error'`.
 
 ## Syntax discipline
 
@@ -390,13 +400,18 @@ The syntax compiler is owned by the MinuCanvas package but kept separate from th
 import { compileMinuDiagramSyntax, parseMinuDiagramSyntax } from '@dpklabs/minucanvas/syntax'
 import { applyCanvasDocumentProfileLayout, layoutMindMap, mindMapCanvasProfile } from '@dpklabs/minucanvas'
 
-const parsed = parseMinuDiagramSyntax(source)
-const { document, diagnostics } = compileMinuDiagramSyntax(source)
+const parsed = parseMinuDiagramSyntax(source, { strict: true })
+const { document, diagnostics } = compileMinuDiagramSyntax(source, { strict: true })
+if (diagnostics.some(({ severity }) => severity === 'error')) {
+  // Show diagnostics and do not persist or apply the generated document.
+}
 const mindMapDocument = layoutMindMap(document, { rootId: 'Product' })
 const profileMindMapDocument = applyCanvasDocumentProfileLayout(document, mindMapCanvasProfile, { rootId: 'Product' })
 ```
 
 The root package also re-exports these helpers for convenience.
+
+Strict mode rejects unsupported explicit declarations, malformed property blocks and connections, invalid directives, unmatched braces, and ambiguous unquoted multiword IDs. Permissive mode remains the default for compatibility, but unsupported compound operators are rejected safely in both modes.
 
 ## Phased implementation
 

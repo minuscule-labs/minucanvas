@@ -52,9 +52,13 @@ const source = `diagram "Auth flow" {
   Error > Login
 }`
 
-const { document, diagnostics } = compileMinuDiagramSyntax(source)
-setValue(document)
-canvasRef.current?.fitView()
+const { document, diagnostics } = compileMinuDiagramSyntax(source, { strict: true })
+if (diagnostics.some(({ severity }) => severity === 'error')) {
+  // Show diagnostics. Do not apply or persist the generated document.
+} else {
+  setValue(document)
+  canvasRef.current?.fitView()
+}
 ```
 
 Useful syntax features:
@@ -63,11 +67,12 @@ Useful syntax features:
 - `direction right | down | up | left`
 - `layout flow | mindmap`
 - node declarations: `Id [shape: diamond, label: "Approved?"]`
-- groups: `group Backend { Api; Worker }`
-- edges: `A > B`, `A - B`, `A <> B`, `A --> B`
+- groups: `Backend { ... }`
+- edges: `A > B`, `A - B`, `A <> B`, `A --> B` (`A -> B` is unsupported)
 - edge labels: `A > B: yes`
 - edge styles: `A > B [style: dashed, routing: elbow]`
 - canonical routing values: `elbow`, `straight`, `curved`
+- strict validation: pass `{ strict: true }` and reject the result when any diagnostic has `severity: 'error'`
 
 Minu diagram syntax uses one language with multiple layouts:
 

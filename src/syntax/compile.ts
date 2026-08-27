@@ -32,7 +32,7 @@ const SHAPE_ALIASES: Record<string, CanvasShape> = {
 }
 
 export function compileMinuDiagramSyntax(source: string, options: MinuDiagramCompileOptions = {}): MinuDiagramCompileResult {
-  return compileParsedMinuDiagram(parseMinuDiagramSyntax(source), options)
+  return compileParsedMinuDiagram(parseMinuDiagramSyntax(source, { strict: options.strict }), options)
 }
 
 export function compileParsedMinuDiagram(parsed: ParsedMinuDiagram, options: MinuDiagramCompileOptions = {}): MinuDiagramCompileResult {
