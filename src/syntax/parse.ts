@@ -247,6 +247,8 @@ function propsToNode(id: string, props: Record<string, string>, groupId: string 
     color: props.color,
     style,
     groupId,
+    propertyNames: Object.keys(props),
+    properties: props,
     line,
   }
 }
@@ -263,8 +265,9 @@ function styleFromProps(props: Record<string, string>): CanvasNodeStyle | undefi
 
 function numberProp(value: string | undefined): number | undefined {
   if (!value) return undefined
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : undefined
+  // Preserve invalid numeric input for semantic validation rather than silently
+  // converting it to an absent property.
+  return Number(value)
 }
 
 function normalizeLines(source: string): ParseLine[] {
@@ -276,8 +279,11 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
   const nodes = new Map<string, MinuDiagramNode>()
   const groups = new Map<string, MinuDiagramGroup>()
   const connections: ParsedMinuDiagram['connections'] = []
+  const identities: ParsedMinuDiagram['identities'] = []
   const groupStack: Array<{ id: string; entry: ParseLine }> = []
   const defaults: ParsedMinuDiagram['defaults'] = {}
+  const defaultLines: NonNullable<ParsedMinuDiagram['defaultLines']> = {}
+  const defaultDeclarations: NonNullable<ParsedMinuDiagram['defaultDeclarations']> = []
   let diagramEntry: ParseLine | undefined
   let title: string | undefined
   let direction: ParsedMinuDiagram['direction'] = 'down'
@@ -337,7 +343,11 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
 
     const defaultMatch = text.match(/^(colorMode|styleMode|typeface)\s+(.+)$/)
     if (defaultMatch) {
-      defaults[defaultMatch[1] as keyof typeof defaults] = unquote(defaultMatch[2])
+      const property = defaultMatch[1] as keyof typeof defaults
+      const value = unquote(defaultMatch[2])
+      defaults[property] = value
+      defaultLines[property] = entry.line
+      defaultDeclarations.push({ property, value, line: entry.line })
       continue
     }
 
@@ -375,7 +385,8 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
         diagnostics.push(diagnostic(entry, 'unsupported_statement', 'Unquoted multiword group IDs are ambiguous.', 'Quote the group ID or use a single bare ID with a label property.'))
         continue
       }
-      groups.set(id, { id, label: props.label, color: props.color, style: styleFromProps(props), parentGroupId: currentGroupId(), line: entry.line })
+      identities.push({ id, kind: 'group', line: entry.line, properties: props })
+      groups.set(id, { id, label: props.label, color: props.color, style: styleFromProps(props), parentGroupId: currentGroupId(), propertyNames: Object.keys(props), properties: props, line: entry.line })
       groupStack.push({ id, entry })
       continue
     }
@@ -407,14 +418,14 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
         continue
       }
       if (malformed) continue
-      const edgeStyle = edgeStyleFromProps(props, diagnostics, entry.line)
+      const edgeStyle = edgeStyleFromProps(props)
       for (let i = 0; i < tokens.length - 2; i += 2) {
         const leftIds = splitTopLevel(tokens[i], ',').map(unquote)
         const op = tokens[i + 1] as MinuDiagramConnectionOperator
         const rightIds = splitTopLevel(tokens[i + 2], ',').map(unquote)
         for (const from of leftIds) {
           for (const to of rightIds) {
-            connections.push({ from, to, operator: op, label, color: props.color, style: edgeStyle, line: entry.line })
+            connections.push({ from, to, operator: op, label, color: props.color, style: edgeStyle, propertyNames: Object.keys(props), properties: props, line: entry.line })
             ensureNode(nodes, from, currentGroupId(), entry.line)
             ensureNode(nodes, to, currentGroupId(), entry.line)
           }
@@ -443,6 +454,7 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
     for (const idPart of splitTopLevel(idSource, ',')) {
       const id = unquote(idPart)
       if (!id) continue
+      identities.push({ id, kind: 'node', line: entry.line, properties: props })
       nodes.set(id, { ...ensureNode(nodes, id, currentGroupId(), entry.line), ...propsToNode(id, props, currentGroupId(), entry.line) })
     }
   }
@@ -455,23 +467,17 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
     if (diagramEntry) diagnostics.push(diagnostic(diagramEntry, 'unmatched_group', 'Diagram block is missing a closing brace.', 'Add a closing "}" after the diagram contents.'))
   }
 
-  return { title, direction, layout, nodes: [...nodes.values()], groups: [...groups.values()], connections, defaults, diagnostics }
+  return { title, direction, layout, nodes: [...nodes.values()], groups: [...groups.values()], connections, identities, defaults, defaultLines, defaultDeclarations, diagnostics }
 }
 
-function edgeStyleFromProps(props: Record<string, string>, diagnostics: MinuDiagramDiagnostic[], line: number): CanvasEdgeStyle | undefined {
+function edgeStyleFromProps(props: Record<string, string>): CanvasEdgeStyle | undefined {
   const style: CanvasEdgeStyle = {}
   if (props.color) style.stroke = props.color
   if (props.stroke) style.stroke = props.stroke
   if (props.strokeWidth) style.strokeWidth = Number(props.strokeWidth)
-  if (props.style) {
-    if (EDGE_STROKE_STYLES.includes(props.style as CanvasStrokeStyle)) style.strokeStyle = props.style as CanvasStrokeStyle
-    else diagnostics.push({ severity: 'warning', message: `Unsupported edge style "${props.style}". Expected solid, dashed, dotted, or sketch.`, line })
-  }
+  if (props.style && EDGE_STROKE_STYLES.includes(props.style as CanvasStrokeStyle)) style.strokeStyle = props.style as CanvasStrokeStyle
   const routing = props.routing ?? props.route ?? props.lineType
-  if (routing) {
-    if (EDGE_ROUTINGS.includes(routing as CanvasEdgeRouting)) style.routing = routing as CanvasEdgeRouting
-    else diagnostics.push({ severity: 'warning', message: `Unsupported edge routing "${routing}". Expected elbow, straight, or curved.`, line })
-  }
+  if (routing && EDGE_ROUTINGS.includes(routing as CanvasEdgeRouting)) style.routing = routing as CanvasEdgeRouting
   return Object.keys(style).length ? style : undefined
 }
 

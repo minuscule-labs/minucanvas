@@ -151,6 +151,8 @@ See [`docs/minucanvas-json.md`](docs/minucanvas-json.md) for the MinuCanvas JSON
 
 See [`docs/minu-diagram-syntax.md`](docs/minu-diagram-syntax.md) for the proposed LLM-friendly diagram-as-code syntax, including `layout mindmap`. Parser/compiler helpers are available from `@dpklabs/minucanvas/syntax`, and `layoutMindMap(document, options)` is exported from the root package.
 
+See [`docs/rendering-engine-plan.md`](docs/rendering-engine-plan.md) for the staged plan to improve syntax validation, layout, measurement, container handling, obstacle-aware routing, shared export geometry, and visual diagnostics.
+
 See [`docs/linked-nodes-and-host-extensions-plan.md`](docs/linked-nodes-and-host-extensions-plan.md) for the planned generic linked-node, host adornment, context action, and MinuNotes integration extension APIs.
 
 For keyboard-first mind map editing, prefer the built-in profile:

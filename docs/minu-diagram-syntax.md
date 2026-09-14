@@ -308,7 +308,7 @@ styleMode plain
 typeface clean
 ```
 
-MVP can parse these but only apply what MinuCanvas supports.
+These directives are currently parsed but have no document behavior. Each emits an `unsupported_default` warning during compilation; use explicit node and edge styles until a default has defined behavior.
 
 Node styles:
 
@@ -366,6 +366,8 @@ The compiler should produce:
 ```ts
 type CompileResult = {
   document: JsonCanvasDocument
+  /** Ephemeral geometry for passing alongside this exact document to MinuCanvas. */
+  scene: ResolvedCanvasScene
   diagnostics: Array<{
     severity: 'warning' | 'error'
     code?: MinuDiagramDiagnosticCode
@@ -401,10 +403,13 @@ import { compileMinuDiagramSyntax, parseMinuDiagramSyntax } from '@dpklabs/minuc
 import { applyCanvasDocumentProfileLayout, layoutMindMap, mindMapCanvasProfile } from '@dpklabs/minucanvas'
 
 const parsed = parseMinuDiagramSyntax(source, { strict: true })
-const { document, diagnostics } = compileMinuDiagramSyntax(source, { strict: true })
+const { document, scene, diagnostics } = compileMinuDiagramSyntax(source, { strict: true })
 if (diagnostics.some(({ severity }) => severity === 'error')) {
   // Show diagnostics and do not persist or apply the generated document.
 }
+// `scene` is ephemeral derived geometry. Pass it with its exact document to
+// render generated routes; MinuCanvas safely ignores it after document edits.
+;<MinuCanvas value={document} resolvedScene={scene} onChange={setDocument} />
 const mindMapDocument = layoutMindMap(document, { rootId: 'Product' })
 const profileMindMapDocument = applyCanvasDocumentProfileLayout(document, mindMapCanvasProfile, { rootId: 'Product' })
 ```

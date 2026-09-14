@@ -239,7 +239,7 @@ function pointAtHalfPolylineLength(points: Point[]): Point {
   return pointAtPolylineRatio(points, 0.5)
 }
 
-function pointAtPolylineRatio(points: Point[], ratio: number): Point {
+export function pointAtPolylineRatio(points: Point[], ratio: number): Point {
   if (points.length === 0) return { x: 0, y: 0 }
   if (points.length === 1) return points[0] ?? { x: 0, y: 0 }
 

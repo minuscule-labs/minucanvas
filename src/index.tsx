@@ -2,6 +2,8 @@
 // Public API — exported from here
 
 export { CanvasToolbar } from './CanvasToolbar'
+export { canvasDocumentFingerprint, filterResolvedCanvasScene, isResolvedCanvasSceneCurrent, resolveCanvasScene } from './engine/scene'
+export { validateParsedMinuDiagram } from './engine/validate'
 export { JSON_CANVAS_PRESET_COLORS, isJsonCanvasPresetColor, resolveCanvasColor } from './colors'
 export type { CanvasColorMode, JsonCanvasPresetColor } from './colors'
 export { CanvasStyleToolbar } from './CanvasStyleToolbar'
@@ -72,8 +74,10 @@ export type {
   MinuDiagramDiagnostic,
   MinuDiagramDiagnosticCode,
   MinuDiagramDiagnosticSeverity,
+  MinuDiagramDefault,
   MinuDiagramDirection,
   MinuDiagramGroup,
+  MinuDiagramIdentity,
   MinuDiagramLayout,
   MinuDiagramNode,
   MinuDiagramParseOptions,
@@ -106,6 +110,7 @@ export type {
   CanvasShape,
   CanvasShapeTheme,
   CanvasShortcut,
+  CanvasSvgExportOptions,
   CanvasStrokeStyle,
   CanvasThemeMode,
   CanvasTool,
@@ -117,6 +122,7 @@ export type {
   MinuCanvasDocument,
   MinuCanvasProps,
 } from './types'
+export type { CanvasDiagnostic, CanvasDiagnosticCode, ResolvedCanvasScene, ResolvedEdge, ResolvedNode } from './engine/types'
 export type { MindMapDefaultDocumentOptions, MindMapEdgeEnds, MindMapLayoutOptions, MindMapProfileOptions, MindMapSide } from './mindmap'
 export type { CanvasToolbarProps } from './CanvasToolbar'
 export type { CanvasStyleToolbarProps } from './CanvasStyleToolbar'

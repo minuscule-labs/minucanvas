@@ -1,4 +1,5 @@
 import type { MindMapLayoutOptions } from '../mindmap'
+import type { ResolvedCanvasScene } from '../engine/types'
 import type { CanvasEdgeStyle, CanvasNodeStyle, CanvasShape, JsonCanvasDocument } from '../types'
 
 export type MinuDiagramDirection = 'down' | 'up' | 'right' | 'left'
@@ -11,6 +12,13 @@ export type MinuDiagramDiagnosticCode =
   | 'invalid_properties'
   | 'invalid_directive'
   | 'unmatched_group'
+  | 'unsupported_default'
+  | 'unknown_property'
+  | 'invalid_property_value'
+  | 'duplicate_id'
+  | 'unknown_reference'
+  | 'invalid_group_reference'
+  | 'containment_cycle'
 
 export interface MinuDiagramDiagnostic {
   severity: MinuDiagramDiagnosticSeverity
@@ -19,6 +27,7 @@ export interface MinuDiagramDiagnostic {
   line?: number | undefined
   column?: number | undefined
   source?: string | undefined
+  propertyPath?: string | undefined
   suggestion?: string | undefined
 }
 
@@ -39,6 +48,9 @@ export interface MinuDiagramNode {
   color?: string | undefined
   style?: CanvasNodeStyle | undefined
   groupId?: string | undefined
+  /** Parser-only source metadata retained for semantic validation. */
+  propertyNames?: string[] | undefined
+  properties?: Record<string, string> | undefined
   line?: number | undefined
 }
 
@@ -48,6 +60,9 @@ export interface MinuDiagramGroup {
   color?: string | undefined
   style?: CanvasNodeStyle | undefined
   parentGroupId?: string | undefined
+  /** Parser-only source metadata retained for semantic validation. */
+  propertyNames?: string[] | undefined
+  properties?: Record<string, string> | undefined
   line?: number | undefined
 }
 
@@ -60,7 +75,23 @@ export interface MinuDiagramConnection {
   label?: string | undefined
   color?: string | undefined
   style?: CanvasEdgeStyle | undefined
+  /** Parser-only source metadata retained for semantic validation. */
+  propertyNames?: string[] | undefined
+  properties?: Record<string, string> | undefined
   line?: number | undefined
+}
+
+export interface MinuDiagramIdentity {
+  id: string
+  kind: 'node' | 'group'
+  line: number
+  properties: Record<string, string>
+}
+
+export interface MinuDiagramDefault {
+  property: 'colorMode' | 'styleMode' | 'typeface'
+  value: string
+  line: number
 }
 
 export interface ParsedMinuDiagram {
@@ -70,11 +101,17 @@ export interface ParsedMinuDiagram {
   nodes: MinuDiagramNode[]
   groups: MinuDiagramGroup[]
   connections: MinuDiagramConnection[]
+  /** Explicit declarations used for document-wide identity validation. */
+  identities?: MinuDiagramIdentity[] | undefined
   defaults: {
     colorMode?: string | undefined
     styleMode?: string | undefined
     typeface?: string | undefined
   }
+  /** Source lines for parsed defaults; direct callers may omit this metadata. */
+  defaultLines?: Partial<Record<'colorMode' | 'styleMode' | 'typeface', number>> | undefined
+  /** Every authored default directive, retained even when a later one overwrites it. */
+  defaultDeclarations?: MinuDiagramDefault[] | undefined
   diagnostics: MinuDiagramDiagnostic[]
 }
 
@@ -91,6 +128,8 @@ export interface MinuDiagramCompileOptions extends MinuDiagramParseOptions {
 
 export interface MinuDiagramCompileResult {
   document: JsonCanvasDocument
+  /** Experimental derived geometry. Generated points do not modify document edges. */
+  scene: ResolvedCanvasScene
   parsed: ParsedMinuDiagram
   diagnostics: MinuDiagramDiagnostic[]
 }
