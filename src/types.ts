@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
+import type { ResolvedCanvasScene } from './engine/types'
 
 export type JsonCanvasSide = 'top' | 'right' | 'bottom' | 'left'
 export type JsonCanvasEdgeEnd = 'none' | 'arrow'
@@ -142,6 +143,13 @@ export interface CanvasSelection {
   edgeIds: string[]
 }
 
+/** Optional overrides for CanvasHandle.exportSvg(). */
+export interface CanvasSvgExportOptions {
+  area?: 'canvas' | 'selection'
+  background?: 'transparent' | 'solid'
+  colorMode?: 'light' | 'dark'
+}
+
 export type CanvasChangeReason =
   | 'create-node'
   | 'update-node'
@@ -214,7 +222,7 @@ export interface CanvasHandle<NodeExtra extends Record<string, unknown> = Record
   sendSelectionToBack: () => void
   alignSelection: (alignment: CanvasAlignment) => void
   distributeSelection: (distribution: CanvasDistribution) => void
-  exportSvg: () => string
+  exportSvg: (options?: CanvasSvgExportOptions) => string
   exportPng: () => Promise<string>
   getViewport: () => CanvasViewport
   setViewport: (viewport: CanvasViewport) => void
@@ -245,6 +253,8 @@ export type AnyCanvasDocumentProfile = CanvasDocumentProfile<any, any, any>
 
 export interface MinuCanvasProps<NodeExtra extends Record<string, unknown> = Record<string, unknown>, EdgeExtra extends Record<string, unknown> = Record<string, unknown>> {
   value: JsonCanvasDocument<NodeExtra, EdgeExtra>
+  /** Experimental ephemeral geometry. It is ignored when it no longer matches value. */
+  resolvedScene?: ResolvedCanvasScene<NodeExtra, EdgeExtra>
   onChange: (nextValue: JsonCanvasDocument<NodeExtra, EdgeExtra>, context: CanvasChangeContext) => void
   readOnly?: boolean
   className?: string

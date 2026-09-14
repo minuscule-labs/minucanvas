@@ -16,7 +16,8 @@ import {
   type ReactElement,
 } from 'react'
 import { resolveCanvasColor } from './colors'
-import { anchorForEdgeAnchor, canvasBounds, clientToCanvas, defaultEdgeAnchorForSide, defaultEdgeConnection, edgeAnchorForPoint, edgeLabelPoint, edgePath, edgeRoutePoints, moveOrthogonalRouteSegment, nodeCenter, sideForPoint, type Point } from './geometry'
+import { filterResolvedCanvasScene, isResolvedCanvasSceneCurrent, resolveCanvasScene } from './engine/scene'
+import { anchorForEdgeAnchor, canvasBounds, clientToCanvas, defaultEdgeAnchorForSide, defaultEdgeConnection, edgeAnchorForPoint, edgeLabelPoint, edgeRoutePoints, moveOrthogonalRouteSegment, nodeCenter, sideForPoint, type Point } from './geometry'
 import { layoutMindMap } from './mindmap'
 import {
   alignSelection as alignSelectionInDocument,
@@ -55,6 +56,7 @@ import type {
   CanvasNode,
   CanvasSelection,
   CanvasShape,
+  CanvasSvgExportOptions,
   CanvasTool,
   CanvasViewport,
   JsonCanvasDocument,
@@ -438,12 +440,6 @@ function edgeRenderPoints(edge: CanvasEdge, fromNode: CanvasNode | undefined, to
   return from && to ? { from, to } : null
 }
 
-function renderedEdgePath(edge: CanvasEdge, fromNode: CanvasNode | undefined, toNode: CanvasNode | undefined): string | null {
-  if (!edge.fromPoint && !edge.toPoint && fromNode && toNode) return edgePath(edge, fromNode, toNode)
-  const points = edgeRenderPoints(edge, fromNode, toNode)
-  return points ? freeEdgePath(points.from, points.to) : null
-}
-
 function renderedEdgeLabelPoint(edge: CanvasEdge, fromNode: CanvasNode | undefined, toNode: CanvasNode | undefined): Point | null {
   if (!edge.fromPoint && !edge.toPoint && fromNode && toNode) return edgeLabelPoint(edge, fromNode, toNode)
   const points = edgeRenderPoints(edge, fromNode, toNode)
@@ -800,6 +796,7 @@ function DefaultNodeContent({ node, editing }: { node: CanvasNode; editing: bool
 function MinuCanvasInner<NodeExtra extends Record<string, unknown> = Record<string, unknown>, EdgeExtra extends Record<string, unknown> = Record<string, unknown>>(
   {
     value,
+    resolvedScene,
     onChange,
     readOnly = false,
     className,
@@ -872,6 +869,13 @@ function MinuCanvasInner<NodeExtra extends Record<string, unknown> = Record<stri
     edgeIds: selectedEdgeIds ?? localSelection.edgeIds,
   })
   const nodeById = useMemo(() => new Map(value.nodes.map((node) => [node.id, node])), [value.nodes])
+  // A compiled scene is usable only for the exact authored document it resolved.
+  // Any edit or replacement falls back to fresh local geometry immediately.
+  const currentScene = useMemo(
+    () => isResolvedCanvasSceneCurrent(resolvedScene, value) ? resolvedScene : resolveCanvasScene(value),
+    [resolvedScene, value],
+  )
+  const sceneEdgeById = useMemo(() => new Map(currentScene.edges.map((edge) => [edge.id, edge])), [currentScene.edges])
 
   useEffect(() => {
     valueRef.current = value
@@ -1554,12 +1558,17 @@ function MinuCanvasInner<NodeExtra extends Record<string, unknown> = Record<stri
     }
   }, [selection.edgeIds, selection.nodeIds, value])
 
+  const exportSceneForArea = useCallback((area: ExportArea) => {
+    const exportDocument = exportDocumentForArea(area)
+    return exportDocument === value ? currentScene : filterResolvedCanvasScene(currentScene, exportDocument)
+  }, [currentScene, exportDocumentForArea, value])
+
   const exportSvgWithOptions = useCallback((options: ExportOptions): string => {
     const exportDocument = exportDocumentForArea(options.area)
+    const exportScene = exportSceneForArea(options.area)
     const bounds = documentBoundsWithFreeEdges(exportDocument, 80)
     const defaultColor = options.colorMode === 'dark' ? '#f4f4f5' : '#111827'
     const background = options.colorMode === 'dark' ? '#151515' : '#ffffff'
-    const nodes = new Map(exportDocument.nodes.map((node) => [node.id, node]))
     const markerMarkup = exportDocument.edges
       .filter((edge) => (edge.fromEnd ?? 'none') === 'arrow' || (edge.toEnd ?? 'arrow') === 'arrow')
       .map((edge) => {
@@ -1567,21 +1576,20 @@ function MinuCanvasInner<NodeExtra extends Record<string, unknown> = Record<stri
         return `<marker id="arrow-${escapeXml(edge.id)}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${escapeXml(stroke)}" /></marker>`
       })
       .join('\n')
-    const edgeMarkup = exportDocument.edges.map((edge) => {
-      const fromNode = nodes.get(edge.fromNode)
-      const toNode = nodes.get(edge.toNode)
-      const path = renderedEdgePath(edge, fromNode, toNode)
-      if (!path) return ''
+    const exportEdgesById = new Map(exportDocument.edges.map((edge) => [edge.id, edge]))
+    const edgeMarkup = exportScene.edges.map((resolvedEdge) => {
+      const edge = exportEdgesById.get(resolvedEdge.id)
+      if (!edge) return ''
+      const { path, labelPoint } = resolvedEdge
       const stroke = resolveCanvasColor(edge.style?.stroke ?? edge.color, options.colorMode) ?? defaultColor
       const strokeWidth = edge.style?.strokeWidth ?? 1.5
       const dash = edgeDash(edge) ? ` stroke-dasharray="${edgeDash(edge)}"` : ''
       const markerStart = (edge.fromEnd ?? 'none') === 'arrow' ? ` marker-start="url(#arrow-${escapeXml(edge.id)})"` : ''
       const markerEnd = (edge.toEnd ?? 'arrow') === 'arrow' ? ` marker-end="url(#arrow-${escapeXml(edge.id)})"` : ''
-      const labelPoint = edge.label ? renderedEdgeLabelPoint(edge, fromNode, toNode) : null
-      const label = edge.label && labelPoint
+      const label = edge.label
         ? svgText(edge.label, labelPoint.x, labelPoint.y, { color: defaultColor, fontSize: 12, fontWeight: 500, textAnchor: 'middle' })
         : ''
-      return `<path d="${path}" fill="none" stroke="${escapeXml(stroke)}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${dash}${markerStart}${markerEnd} />\n${label}`
+      return `<path d="${escapeXml(path)}" fill="none" stroke="${escapeXml(stroke)}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"${dash}${markerStart}${markerEnd} />\n${label}`
     }).join('\n')
     const nodeMarkup = exportDocument.nodes.map((node) => {
       const shape = svgShapeForNode(node, defaultColor, options.colorMode)
@@ -1605,7 +1613,7 @@ ${backgroundMarkup}
 ${edgeMarkup}
 ${nodeMarkup}
 </svg>`
-  }, [exportDocumentForArea])
+  }, [exportDocumentForArea, exportSceneForArea])
 
   const exportPngWithOptions = useCallback(async (options: ExportOptions): Promise<string> => {
     const svg = exportSvgWithOptions(options)
@@ -1633,7 +1641,11 @@ ${nodeMarkup}
     }
   }, [exportDocumentForArea, exportSvgWithOptions])
 
-  const exportSvg = useCallback((): string => exportSvgWithOptions(exportOptions), [exportOptions, exportSvgWithOptions])
+  const exportSvg = useCallback((options?: CanvasSvgExportOptions): string => exportSvgWithOptions({
+    ...exportOptions,
+    ...options,
+    fileType: 'svg',
+  }), [exportOptions, exportSvgWithOptions])
 
   const exportPng = useCallback(async (): Promise<string> => exportPngWithOptions(exportOptions), [exportOptions, exportPngWithOptions])
 
@@ -2728,9 +2740,7 @@ ${nodeMarkup}
               ))}
           </defs>
           {value.edges.map((edge) => {
-            const fromNode = nodeById.get(edge.fromNode)
-            const toNode = nodeById.get(edge.toNode)
-            const path = renderedEdgePath(edge, fromNode, toNode)
+            const path = sceneEdgeById.get(edge.id)?.path
             if (!path) return null
             const selected = selection.edgeIds.includes(edge.id)
             const strokeStyle = edge.style?.strokeStyle
@@ -2829,11 +2839,9 @@ ${nodeMarkup}
         </svg>
 
         {value.edges.map((edge) => {
-          const fromNode = nodeById.get(edge.fromNode)
-          const toNode = nodeById.get(edge.toNode)
           const editingEdge = editingEdgeId === edge.id
           if (!edge.label && !editingEdge) return null
-          const point = renderedEdgeLabelPoint(edge, fromNode, toNode)
+          const point = sceneEdgeById.get(edge.id)?.labelPoint
           if (!point) return null
           return (
             <div

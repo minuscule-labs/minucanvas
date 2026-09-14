@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { compileMinuDiagramSyntax, parseMinuDiagramSyntax } from './index'
+import { compileMinuDiagramSyntax, compileParsedMinuDiagram, parseMinuDiagramSyntax } from './index'
+import type { ParsedMinuDiagram } from './types'
+import { resolveCanvasScene } from '../engine/scene'
 
 describe('parseMinuDiagramSyntax', () => {
   it('parses nodes, direction, labels, chains, and edge properties', () => {
@@ -30,6 +32,21 @@ describe('parseMinuDiagramSyntax', () => {
     `)
 
     expect(parsed.layout).toBe('mindmap')
+  })
+
+  it('warns once per currently unsupported diagram default while continuing compilation', () => {
+    const result = compileMinuDiagramSyntax(`
+      colorMode outline
+      styleMode plain
+      typeface clean
+      A > B
+    `)
+    const warnings = result.diagnostics.filter((diagnostic) => diagnostic.code === 'unsupported_default')
+
+    expect(result.document.nodes).toHaveLength(2)
+    expect(warnings.map((diagnostic) => diagnostic.propertyPath)).toEqual(['colorMode', 'styleMode', 'typeface'])
+    expect(warnings.map((diagnostic) => diagnostic.line)).toEqual([2, 3, 4])
+    expect(result.scene.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(['unsupported_default', 'unsupported_default', 'unsupported_default'])
   })
 
   it('parses groups and assigns child group IDs', () => {
@@ -187,18 +204,18 @@ describe('compileMinuDiagramSyntax', () => {
     expect(result.document.edges[0].style?.routing).toBe('curved')
   })
 
-  it('warns on unsupported edge routing', () => {
+  it('rejects unsupported edge routing before constructing a document', () => {
     const result = compileMinuDiagramSyntax('A > B [routing: diagonal]')
 
-    expect(result.document.edges[0].style?.routing).toBeUndefined()
-    expect(result.diagnostics[0]).toMatchObject({ severity: 'warning' })
+    expect(result.document).toEqual({ nodes: [], edges: [] })
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'invalid_property_value', propertyPath: 'routing' }))
   })
 
-  it('warns and falls back for unsupported shapes', () => {
+  it('rejects unsupported shapes before constructing a document', () => {
     const result = compileMinuDiagramSyntax('DB [shape: cylinder]')
 
-    expect(result.document.nodes[0].shape).toBe('rounded-rectangle')
-    expect(result.diagnostics[0]?.severity).toBe('warning')
+    expect(result.document).toEqual({ nodes: [], edges: [] })
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'invalid_property_value', propertyPath: 'shape' }))
   })
 
   it('uses node positions to choose sides for back edges', () => {
@@ -299,5 +316,141 @@ describe('compileMinuDiagramSyntax', () => {
 
     const edge = result.document.edges.find((item) => item.toNode === 'Error')
     expect(edge).toMatchObject({ fromSide: 'bottom', toSide: 'top' })
+  })
+
+  it('fits nested groups from child bounds outward', () => {
+    const result = compileMinuDiagramSyntax(`
+      Outer {
+        Inner {
+          A
+          B
+        }
+      }
+    `)
+    const outer = result.document.nodes.find((node) => node.id === 'Outer')!
+    const inner = result.document.nodes.find((node) => node.id === 'Inner')!
+
+    expect(outer.x).toBeLessThanOrEqual(inner.x - 40)
+    expect(outer.y).toBeLessThanOrEqual(inner.y - 40)
+    expect(outer.x + outer.width).toBeGreaterThanOrEqual(inner.x + inner.width + 40)
+    expect(outer.y + outer.height).toBeGreaterThanOrEqual(inner.y + inner.height + 40)
+  })
+
+  it('returns Dagre-generated routes only in the resolved scene', () => {
+    const result = compileMinuDiagramSyntax('direction right\nA > B > C')
+    const edge = result.document.edges[0]!
+    const resolved = result.scene.edges.find((item) => item.id === edge.id)!
+
+    expect(resolved.points.length).toBeGreaterThan(2)
+    expect(resolved.points.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))).toBe(true)
+    expect(resolved.points[0]).toEqual({ x: result.document.nodes[0]!.x + result.document.nodes[0]!.width, y: result.document.nodes[0]!.y + result.document.nodes[0]!.height / 2 })
+    expect(edge.waypoints).toBeUndefined()
+  })
+
+  it('gives manual routing modes and authored waypoints precedence over generated routes', () => {
+    const document = {
+      nodes: [
+        { id: 'A', type: 'text' as const, x: 0, y: 0, width: 100, height: 60 },
+        { id: 'B', type: 'text' as const, x: 300, y: 0, width: 100, height: 60 },
+      ],
+      edges: [
+        { id: 'manual-mode', fromNode: 'A', toNode: 'B', routingMode: 'manual' as const },
+        { id: 'manual-waypoints', fromNode: 'A', toNode: 'B', waypoints: [{ x: 160, y: 140 }] },
+      ],
+    }
+    const scene = resolveCanvasScene(document, {
+      generatedEdgePoints: new Map(document.edges.map((edge) => [edge.id, [{ x: 100, y: 30 }, { x: 200, y: 240 }, { x: 300, y: 30 }]])),
+    })
+
+    expect(scene.edges.find((edge) => edge.id === 'manual-mode')?.points).not.toContainEqual({ x: 200, y: 240 })
+    expect(scene.edges.find((edge) => edge.id === 'manual-waypoints')?.points).toContainEqual({ x: 160, y: 140 })
+  })
+
+  it('reports semantic diagnostics with stable codes and never emits malformed documents', () => {
+    const result = compileMinuDiagramSyntax(`
+      Shared
+      Shared {
+        A [type: bogus, width: NaN, unexpected: true]
+      }
+    `)
+
+    expect(result.diagnostics.map((item) => item.code)).toEqual(expect.arrayContaining([
+      'duplicate_id',
+      'invalid_property_value',
+      'unknown_property',
+    ]))
+    expect(result.document).toEqual({ nodes: [], edges: [] })
+    expect(result.scene.diagnostics).toHaveLength(4)
+    expect(result.diagnostics.find((item) => item.code === 'unknown_property')?.propertyPath).toBe('unexpected')
+  })
+
+  it('retains declaration metadata and rejects invalid group and edge styles', () => {
+    const repeated = compileMinuDiagramSyntax('A [unexpected: true]\nA [label: "okay"]')
+    const styles = compileMinuDiagramSyntax('G [strokeWidth: nope, style: neon] {\n  A > B [strokeWidth: nope, routing: diagonal]\n}')
+
+    expect(repeated.diagnostics).toContainEqual(expect.objectContaining({ code: 'unknown_property', line: 1 }))
+    expect(styles.document).toEqual({ nodes: [], edges: [] })
+    expect(styles.diagnostics.filter((item) => item.code === 'invalid_property_value')).toHaveLength(4)
+    expect(styles.diagnostics.some((item) => item.severity === 'warning')).toBe(false)
+  })
+
+  it('validates overwritten values from every node declaration', () => {
+    const result = compileMinuDiagramSyntax(`
+      BadWidth [width: NaN]
+      BadWidth [label: "okay"]
+      BadHeight [height: 0]
+      BadHeight [label: "okay"]
+      BadType [type: bogus]
+      BadType [label: "okay"]
+      BadShape [shape: cylinder]
+      BadShape [label: "okay"]
+    `)
+
+    expect(result.document).toEqual({ nodes: [], edges: [] })
+    expect(result.diagnostics.filter((item) => item.code === 'invalid_property_value').map((item) => item.propertyPath)).toEqual([
+      'width', 'height', 'type', 'shape',
+    ])
+  })
+
+  it('compiles directly constructed parsed documents without identity metadata', () => {
+    const parsed: ParsedMinuDiagram = {
+      direction: 'right',
+      nodes: [
+        { id: 'A' },
+        { id: 'B' },
+      ],
+      groups: [],
+      connections: [{ from: 'A', to: 'B', operator: '>' }],
+      defaults: {},
+      diagnostics: [],
+    }
+
+    const result = compileParsedMinuDiagram(parsed)
+    expect(result.document.nodes.map((node) => node.id)).toEqual(['A', 'B'])
+    expect(result.document.edges).toHaveLength(1)
+  })
+
+  it('validates normalized styles from direct parsed-document callers', () => {
+    const parsed: ParsedMinuDiagram = {
+      direction: 'right',
+      nodes: [
+        { id: 'A', style: { strokeWidth: Number.NaN, strokeStyle: 'neon' as never } },
+        { id: 'B' },
+      ],
+      groups: [{ id: 'G', style: { strokeWidth: -1, strokeStyle: 'glow' as never } }],
+      connections: [{ from: 'A', to: 'B', operator: '>', style: { strokeWidth: Number.POSITIVE_INFINITY, strokeStyle: 'sparkle' as never, routing: 'diagonal' as never } }],
+      defaults: {},
+      diagnostics: [],
+    }
+
+    const result = compileParsedMinuDiagram(parsed)
+    const invalid = result.diagnostics.filter((item) => item.code === 'invalid_property_value')
+
+    expect(result.document).toEqual({ nodes: [], edges: [] })
+    expect(invalid.map((item) => item.propertyPath)).toEqual([
+      'strokeWidth', 'style',
+      'strokeWidth', 'style',
+      'strokeWidth', 'style', 'routing',
+    ])
   })
 })

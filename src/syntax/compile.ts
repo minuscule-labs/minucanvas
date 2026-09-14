@@ -1,5 +1,8 @@
 import dagre from '@dagrejs/dagre'
+import { resolveCanvasScene } from '../engine/scene'
+import { asMinuDiagramDiagnostics, validateParsedMinuDiagram } from '../engine/validate'
 import { defaultEdgeConnection } from '../geometry'
+import type { Point } from '../geometry'
 import { layoutMindMap } from '../mindmap'
 import { createCanvasEdge, createCanvasNode } from '../model'
 import type { CanvasEdge, CanvasNode, CanvasShape, JsonCanvasEdgeEnd } from '../types'
@@ -36,15 +39,20 @@ export function compileMinuDiagramSyntax(source: string, options: MinuDiagramCom
 }
 
 export function compileParsedMinuDiagram(parsed: ParsedMinuDiagram, options: MinuDiagramCompileOptions = {}): MinuDiagramCompileResult {
-  const diagnostics: MinuDiagramDiagnostic[] = [...parsed.diagnostics]
+  const semanticDiagnostics = validateParsedMinuDiagram(parsed)
+  const diagnostics: MinuDiagramDiagnostic[] = [...parsed.diagnostics, ...asMinuDiagramDiagnostics(semanticDiagnostics)]
+  if (semanticDiagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+    const document = { nodes: [], edges: [] }
+    return { document, scene: resolveCanvasScene(document, { diagnostics: semanticDiagnostics }), parsed, diagnostics }
+  }
   const origin = options.origin ?? { x: 80, y: 80 }
   const nodeGap = options.nodeGap ?? 56
   const rankGap = options.rankGap ?? 112
   const groupPadding = options.groupPadding ?? GROUP_PADDING
   const gridSize = options.gridSize === false ? null : options.gridSize ?? 20
   const layout = options.layout ?? parsed.layout ?? 'flow'
-  const nodePositions = layout === 'mindmap'
-    ? new Map(parsed.nodes.map((node) => [node.id, origin]))
+  const placement = layout === 'mindmap'
+    ? { positions: new Map(parsed.nodes.map((node) => [node.id, origin])), edgePoints: new Map<string, Point[]>() }
     : placeNodes(parsed, origin, nodeGap, rankGap, gridSize)
 
   const nodes: CanvasNode[] = []
@@ -67,7 +75,7 @@ export function compileParsedMinuDiagram(parsed: ParsedMinuDiagram, options: Min
   }
 
   for (const node of parsed.nodes) {
-    nodes.push(createNode(node, nodePositions.get(node.id) ?? origin, diagnostics, layout === 'mindmap' ? 'text' : 'rounded-rectangle'))
+    nodes.push(createNode(node, placement.positions.get(node.id) ?? origin, diagnostics, layout === 'mindmap' ? 'text' : 'rounded-rectangle'))
   }
 
   const nodeLookup = new Map(nodes.map((node) => [node.id, node]))
@@ -76,10 +84,11 @@ export function compileParsedMinuDiagram(parsed: ParsedMinuDiagram, options: Min
   const document = { nodes: documentNodes, edges }
   if (layout === 'mindmap') {
     const mindMapDocument = layoutMindMap(document, { origin, gridSize: options.gridSize, ...(options.mindMap ?? {}) })
-    return { document: { ...mindMapDocument, nodes: fitGroups(mindMapDocument.nodes, groupPadding) }, parsed, diagnostics }
+    const resolvedDocument = { ...mindMapDocument, nodes: fitGroups(mindMapDocument.nodes, groupPadding) }
+    return { document: resolvedDocument, scene: resolveCanvasScene(resolvedDocument, { diagnostics: semanticDiagnostics }), parsed, diagnostics }
   }
 
-  return { document, parsed, diagnostics }
+  return { document, scene: resolveCanvasScene(document, { generatedEdgePoints: placement.edgePoints, diagnostics: semanticDiagnostics }), parsed, diagnostics }
 }
 
 function createNode(node: MinuDiagramNode, position: { x: number; y: number }, diagnostics: MinuDiagramDiagnostic[], defaultShape: CanvasShape): CanvasNode {
@@ -133,16 +142,16 @@ function sizeForTextNote(text: string): { width: number; height: number } {
 }
 
 function sizeForNode(node: MinuDiagramNode, type: CanvasNode['type'], shape: CanvasShape): { width: number; height: number } {
-  if (node.width && node.height) return { width: node.width, height: node.height }
-  if (type === 'image') return { width: node.width ?? IMAGE_WIDTH, height: node.height ?? IMAGE_HEIGHT }
+  const dimension = (value: number | undefined, fallback: number) => Number.isFinite(value) && (value ?? 0) > 0 ? value! : fallback
+  if (type === 'image') return { width: dimension(node.width, IMAGE_WIDTH), height: dimension(node.height, IMAGE_HEIGHT) }
   if (shape === 'text') {
     const size = sizeForTextNote(node.label ?? node.id)
-    return { width: node.width ?? size.width, height: node.height ?? size.height }
+    return { width: dimension(node.width, size.width), height: dimension(node.height, size.height) }
   }
-  if (shape === 'diamond') return { width: node.width ?? DIAMOND_WIDTH, height: node.height ?? DIAMOND_HEIGHT }
-  if (shape === 'ellipse') return { width: node.width ?? ELLIPSE_SIZE, height: node.height ?? ELLIPSE_SIZE }
-  if (shape === 'pill') return { width: node.width ?? 180, height: node.height ?? 84 }
-  return { width: node.width ?? DEFAULT_WIDTH, height: node.height ?? DEFAULT_HEIGHT }
+  if (shape === 'diamond') return { width: dimension(node.width, DIAMOND_WIDTH), height: dimension(node.height, DIAMOND_HEIGHT) }
+  if (shape === 'ellipse') return { width: dimension(node.width, ELLIPSE_SIZE), height: dimension(node.height, ELLIPSE_SIZE) }
+  if (shape === 'pill') return { width: dimension(node.width, 180), height: dimension(node.height, 84) }
+  return { width: dimension(node.width, DEFAULT_WIDTH), height: dimension(node.height, DEFAULT_HEIGHT) }
 }
 
 function createEdge(connection: MinuDiagramConnection, index: number, nodes: Map<string, CanvasNode>): CanvasEdge {
@@ -175,13 +184,18 @@ function edgeDirection(connection: MinuDiagramConnection): { fromNode: string; t
   return { fromNode: connection.from, toNode: connection.to, fromEnd: 'none', toEnd: 'arrow' }
 }
 
+interface FlowPlacement {
+  positions: Map<string, { x: number; y: number }>
+  edgePoints: Map<string, Point[]>
+}
+
 function placeNodes(
   parsed: ParsedMinuDiagram,
   origin: { x: number; y: number },
   nodeGap: number,
   rankGap: number,
   gridSize: number | null,
-): Map<string, { x: number; y: number }> {
+): FlowPlacement {
   // Mermaid's flowcharts delegate ordering and coordinate assignment to Dagre. In
   // particular, its crossing-minimization passes are much more reliable than
   // placing each rank in declaration order, which often made links pass through
@@ -220,10 +234,21 @@ function placeNodes(
   const minX = Math.min(0, ...raw.map((point) => point.x))
   const minY = Math.min(0, ...raw.map((point) => point.y))
   const snap = (value: number) => gridSize ? Math.round(value / gridSize) * gridSize : value
-  return new Map(raw.map((point) => [point.id, {
+  const positions = new Map(raw.map((point) => [point.id, {
     x: snap(origin.x + point.x - minX + point.width / 2) - point.width / 2,
     y: snap(origin.y + point.y - minY + point.height / 2) - point.height / 2,
   }]))
+  const edgePoints = new Map<string, Point[]>()
+  parsed.connections.forEach((connection, index) => {
+    const direction = edgeDirection(connection)
+    const edge = graph.edge({ v: direction.fromNode, w: direction.toNode, name: `edge-${index}` }) as { points?: Point[] } | undefined
+    if (!edge?.points?.length) return
+    edgePoints.set(`edge-${index + 1}`, edge.points.map((point) => ({
+      x: snap(origin.x + point.x - minX),
+      y: snap(origin.y + point.y - minY),
+    })))
+  })
+  return { positions, edgePoints }
 }
 
 function estimatedNodeSize(node: MinuDiagramNode): { width: number; height: number } {
@@ -233,16 +258,30 @@ function estimatedNodeSize(node: MinuDiagramNode): { width: number; height: numb
 }
 
 function fitGroups(nodes: CanvasNode[], padding: number): CanvasNode[] {
-  return nodes.map((node) => {
-    if (node.type !== 'group') return node
-    const children = nodes.filter((candidate) => candidate.groupId === node.id && candidate.id !== node.id)
-    if (children.length === 0) return node
-    const minX = Math.min(...children.map((child) => child.x))
-    const minY = Math.min(...children.map((child) => child.y))
-    const maxX = Math.max(...children.map((child) => child.x + child.width))
-    const maxY = Math.max(...children.map((child) => child.y + child.height))
-    return { ...node, x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }
-  })
+  // Resolve descendants first: a parent must fit a child's resolved bounds, not
+  // the group's placeholder dimensions from before its own children were fitted.
+  const resolved = new Map(nodes.map((node) => [node.id, node]))
+  const visiting = new Set<string>()
+  const resolveGroup = (id: string): CanvasNode | undefined => {
+    const group = resolved.get(id)
+    if (!group || group.type !== 'group') return group
+    if (visiting.has(id)) return group // Validation reports cycles; keep this pass finite.
+    visiting.add(id)
+    const children = nodes
+      .filter((candidate) => candidate.groupId === id && candidate.id !== id)
+      .map((child) => child.type === 'group' ? resolveGroup(child.id) ?? child : resolved.get(child.id) ?? child)
+    if (children.length > 0) {
+      const minX = Math.min(...children.map((child) => child.x))
+      const minY = Math.min(...children.map((child) => child.y))
+      const maxX = Math.max(...children.map((child) => child.x + child.width))
+      const maxY = Math.max(...children.map((child) => child.y + child.height))
+      resolved.set(id, { ...group, x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 })
+    }
+    visiting.delete(id)
+    return resolved.get(id)
+  }
+  for (const node of nodes) if (node.type === 'group') resolveGroup(node.id)
+  return nodes.map((node) => resolved.get(node.id) ?? node)
 }
 
 function isImageUrl(value: string): boolean {
