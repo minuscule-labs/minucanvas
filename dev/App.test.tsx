@@ -2,13 +2,13 @@ import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveCanvasScene } from '../src/engine/scene'
-import type { MermaidCompileResult } from '../src/mermaid'
+import type { DiagramSyntaxCompileResult } from '../src/mermaid'
 import type { JsonCanvasDocument } from '../src/types'
 import App from './App'
 
-const compileMermaidSyntax = vi.hoisted(() => vi.fn())
+const compileDiagramSyntax = vi.hoisted(() => vi.fn())
 
-vi.mock('../src/mermaid', () => ({ compileMermaidSyntax }))
+vi.mock('../src/mermaid', () => ({ compileDiagramSyntax }))
 
 function diagramControls() {
   const section = screen.getByRole('heading', { name: 'Diagram syntax' }).closest('article')!
@@ -25,13 +25,14 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function successfulMermaidResult(id: string): MermaidCompileResult {
+function successfulResult(id: string, format: 'minu' | 'mermaid'): DiagramSyntaxCompileResult {
   const document: JsonCanvasDocument = {
     nodes: [{ id, type: 'text', text: id, x: 0, y: 0, width: 100, height: 60 }],
     edges: [],
   }
   return {
     success: true,
+    format,
     diagnostics: [],
     parsed: { direction: 'right', nodes: [{ id, label: id, shape: 'rectangle' }], groups: [], edges: [] },
     document,
@@ -39,31 +40,37 @@ function successfulMermaidResult(id: string): MermaidCompileResult {
   }
 }
 
-describe('Mermaid demo import', () => {
+describe('Diagram syntax demo import', () => {
   beforeEach(() => {
-    compileMermaidSyntax.mockReset()
+    compileDiagramSyntax.mockReset()
+    compileDiagramSyntax.mockImplementation((_source: string, options: { format?: string }) => Promise.resolve(
+      options.format === 'mermaid'
+        ? successfulResult('mermaid-result', 'mermaid')
+        : successfulResult('User', 'minu'),
+    ))
   })
 
-  it('imports both Minu and Mermaid sources through the selected format', async () => {
-    compileMermaidSyntax.mockResolvedValue(successfulMermaidResult('mermaid-result'))
+  it('auto-detects Minu input and supports explicitly selecting Mermaid', async () => {
     const user = userEvent.setup()
     render(<App />)
     const controls = diagramControls()
 
-    await user.click(within(controls.section).getByRole('button', { name: 'Import minu' }))
+    await user.click(within(controls.section).getByRole('button', { name: 'Import auto' }))
     expect(await screen.findByText(/"id": "User"/)).toBeInTheDocument()
+    expect(compileDiagramSyntax).toHaveBeenCalledWith(expect.stringContaining('diagram "Auth flow"'), { format: 'auto', strict: true })
 
     await user.selectOptions(controls.format, 'mermaid')
     await user.click(within(controls.section).getByRole('button', { name: 'Import mermaid' }))
     expect(await screen.findByText(/"id": "mermaid-result"/)).toBeInTheDocument()
-    expect(compileMermaidSyntax).toHaveBeenCalledWith(expect.stringContaining('flowchart LR'))
+    expect(compileDiagramSyntax).toHaveBeenLastCalledWith(expect.stringContaining('flowchart LR'), { format: 'mermaid', strict: true })
   })
 
   it('keeps the current canvas when Mermaid compilation fails', async () => {
-    compileMermaidSyntax.mockResolvedValue({
+    compileDiagramSyntax.mockResolvedValue({
       success: false,
+      format: 'mermaid',
       diagnostics: [{ severity: 'error', code: 'invalid_syntax', message: 'Broken Mermaid', line: 2 }],
-    } satisfies MermaidCompileResult)
+    } satisfies DiagramSyntaxCompileResult)
     const user = userEvent.setup()
     render(<App />)
     const controls = diagramControls()
@@ -73,14 +80,14 @@ describe('Mermaid demo import', () => {
     await user.type(controls.source, 'flowchart TD')
     await user.click(within(controls.section).getByRole('button', { name: 'Import mermaid' }))
 
-    expect(compileMermaidSyntax).toHaveBeenCalledWith('flowchart TD')
+    expect(compileDiagramSyntax).toHaveBeenCalledWith('flowchart TD', { format: 'mermaid', strict: true })
     expect(await within(controls.section).findByText('error: Broken Mermaid (line 2)')).toBeInTheDocument()
     expect(screen.getByText(/"id": "start"/)).toBeInTheDocument()
   })
 
-  it('does not apply a stale Mermaid result after the source changes', async () => {
-    const pending = deferred<MermaidCompileResult>()
-    compileMermaidSyntax.mockReturnValue(pending.promise)
+  it('does not apply a stale auto-detected result after the source changes', async () => {
+    const pending = deferred<DiagramSyntaxCompileResult>()
+    compileDiagramSyntax.mockReturnValue(pending.promise)
     const user = userEvent.setup()
     render(<App />)
     const controls = diagramControls()
@@ -91,7 +98,7 @@ describe('Mermaid demo import', () => {
 
     await user.type(controls.source, ' ')
     await act(async () => {
-      pending.resolve(successfulMermaidResult('stale-result'))
+      pending.resolve(successfulResult('stale-result', 'mermaid'))
       await pending.promise
     })
 

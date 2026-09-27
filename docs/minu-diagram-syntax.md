@@ -416,7 +416,7 @@ const profileMindMapDocument = applyCanvasDocumentProfileLayout(document, mindMa
 
 The root package also re-exports these helpers for convenience.
 
-Strict mode rejects unsupported explicit declarations, malformed property blocks and connections, invalid directives, unmatched braces, and ambiguous unquoted multiword IDs. Permissive mode remains the default for compatibility, but unsupported compound operators are rejected safely in both modes.
+Strict mode rejects unsupported explicit declarations, malformed property blocks and connections, invalid directives, unmatched braces, and ambiguous unquoted multiword IDs. Permissive mode remains the default for compatibility, but unsupported compound operators and empty connection operands are rejected safely in both modes. The parser and compiler also accept optional `maxSourceLength`, `maxNodes`, `maxEdges`, and `maxNesting` limits; the auto-detecting API applies shared defaults to either syntax.
 
 ## Phased implementation
 

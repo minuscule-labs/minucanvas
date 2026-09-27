@@ -1,4 +1,5 @@
 import { parse } from 'mermaid-parser-bundle'
+import { DEFAULT_DIAGRAM_RESOURCE_LIMITS } from './limits'
 import type {
   MermaidDiagnostic,
   MermaidDiagramEdge,
@@ -8,13 +9,6 @@ import type {
   MermaidParseResult,
   ParsedMermaidDiagram,
 } from './types'
-
-const DEFAULT_LIMITS = {
-  maxSourceLength: 100_000,
-  maxNodes: 500,
-  maxEdges: 1_000,
-  maxNesting: 16,
-} as const
 
 interface FlowVertex {
   id?: unknown
@@ -66,7 +60,7 @@ interface FlowDb {
 }
 
 export async function parseMermaidSyntax(source: string, options: MermaidParseOptions = {}): Promise<MermaidParseResult> {
-  const maxSourceLength = options.maxSourceLength ?? DEFAULT_LIMITS.maxSourceLength
+  const maxSourceLength = options.maxSourceLength ?? DEFAULT_DIAGRAM_RESOURCE_LIMITS.maxSourceLength
   if (source.length > maxSourceLength) {
     return failure('resource_limit', `Mermaid source exceeds the ${maxSourceLength} character limit.`)
   }
@@ -80,7 +74,7 @@ export async function parseMermaidSyntax(source: string, options: MermaidParseOp
   }
 
   const maskedSource = maskComments(source)
-  const expansionDiagnostic = preflightExpansion(maskedSource, options.maxEdges ?? DEFAULT_LIMITS.maxEdges)
+  const expansionDiagnostic = preflightExpansion(maskedSource, options.maxEdges ?? DEFAULT_DIAGRAM_RESOURCE_LIMITS.maxEdges)
   if (expansionDiagnostic) return { success: false, diagnostics: [expansionDiagnostic] }
 
   let result: { type: string; db: unknown }
@@ -309,9 +303,9 @@ function validateNormalizedGraph(parsed: ParsedMermaidDiagram, db: FlowDb, optio
     }
   }
 
-  const maxNodes = options.maxNodes ?? DEFAULT_LIMITS.maxNodes
-  const maxEdges = options.maxEdges ?? DEFAULT_LIMITS.maxEdges
-  const maxNesting = options.maxNesting ?? DEFAULT_LIMITS.maxNesting
+  const maxNodes = options.maxNodes ?? DEFAULT_DIAGRAM_RESOURCE_LIMITS.maxNodes
+  const maxEdges = options.maxEdges ?? DEFAULT_DIAGRAM_RESOURCE_LIMITS.maxEdges
+  const maxNesting = options.maxNesting ?? DEFAULT_DIAGRAM_RESOURCE_LIMITS.maxNesting
   const nativeNodeCount = parsed.nodes.length + parsed.groups.length
   if (nativeNodeCount > maxNodes) diagnostics.push(limit(`Mermaid diagram creates ${nativeNodeCount} native nodes including groups; the limit is ${maxNodes}.`))
   if (parsed.edges.length > maxEdges) diagnostics.push(limit(`Mermaid diagram has ${parsed.edges.length} edges; the limit is ${maxEdges}.`))

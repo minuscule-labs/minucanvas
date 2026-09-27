@@ -275,6 +275,22 @@ function normalizeLines(source: string): ParseLine[] {
 }
 
 export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParseOptions = {}): ParsedMinuDiagram {
+  if (options.maxSourceLength !== undefined && source.length > options.maxSourceLength) {
+    return {
+      direction: 'down',
+      nodes: [],
+      groups: [],
+      connections: [],
+      identities: [],
+      defaults: {},
+      diagnostics: [{
+        severity: 'error',
+        code: 'resource_limit',
+        message: `Minu source exceeds the ${options.maxSourceLength} character limit.`,
+      }],
+    }
+  }
+
   const diagnostics: MinuDiagramDiagnostic[] = []
   const nodes = new Map<string, MinuDiagramNode>()
   const groups = new Map<string, MinuDiagramGroup>()
@@ -289,8 +305,15 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
   let direction: ParsedMinuDiagram['direction'] = 'down'
   let layout: ParsedMinuDiagram['layout']
   const currentGroupId = () => groupStack.at(-1)?.id
+  let resourceLimitReached = false
+  const failResourceLimit = (entry: ParseLine, message: string) => {
+    diagnostics.push(diagnostic(entry, 'resource_limit', message))
+    resourceLimitReached = true
+  }
+  const nativeNodeCount = () => nodes.size + groups.size
 
   for (const entry of normalizeLines(source)) {
+    if (resourceLimitReached) break
     let text = entry.text
     const unsupportedOperator = findUnsupportedOperator(text)
     if (unsupportedOperator) {
@@ -385,6 +408,14 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
         diagnostics.push(diagnostic(entry, 'unsupported_statement', 'Unquoted multiword group IDs are ambiguous.', 'Quote the group ID or use a single bare ID with a label property.'))
         continue
       }
+      if (options.maxNesting !== undefined && groupStack.length >= options.maxNesting) {
+        failResourceLimit(entry, `Minu group nesting exceeds the limit of ${options.maxNesting}.`)
+        break
+      }
+      if (!groups.has(id) && options.maxNodes !== undefined && nativeNodeCount() >= options.maxNodes) {
+        failResourceLimit(entry, `Minu diagram exceeds the ${options.maxNodes} native node limit.`)
+        break
+      }
       identities.push({ id, kind: 'group', line: entry.line, properties: props })
       groups.set(id, { id, label: props.label, color: props.color, style: styleFromProps(props), parentGroupId: currentGroupId(), propertyNames: Object.keys(props), properties: props, line: entry.line })
       groupStack.push({ id, entry })
@@ -405,10 +436,12 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
       const labelSource = colonIndex === -1 ? undefined : withoutProps.slice(colonIndex + 1).trim()
       const label = labelSource === undefined ? undefined : unquote(labelSource)
       const tokens = splitConnectionTokens(expression)
-      const malformed = tokens.length < 3 || tokens.length % 2 === 0
+      const hasEmptyOperand = tokens.some((token, index) => index % 2 === 0
+        && splitTopLevel(token, ',').some((part) => unquote(part).trim().length === 0))
+      const malformed = hasEmptyOperand || tokens.length < 3 || tokens.length % 2 === 0
         || tokens.some((token, index) => index % 2 === 0 ? CONNECTION_OPERATORS.includes(token as MinuDiagramConnectionOperator) : !CONNECTION_OPERATORS.includes(token as MinuDiagramConnectionOperator))
       const ambiguousOperand = tokens.some((token, index) => index % 2 === 0 && hasAmbiguousBareId(token))
-      if (options.strict && (malformed || ambiguousOperand || labelSource === '')) {
+      if (hasEmptyOperand || (options.strict && (malformed || ambiguousOperand || labelSource === ''))) {
         diagnostics.push(diagnostic(
           entry,
           'malformed_connection',
@@ -419,12 +452,22 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
       }
       if (malformed) continue
       const edgeStyle = edgeStyleFromProps(props)
+      connectionExpansion:
       for (let i = 0; i < tokens.length - 2; i += 2) {
         const leftIds = splitTopLevel(tokens[i], ',').map(unquote)
         const op = tokens[i + 1] as MinuDiagramConnectionOperator
         const rightIds = splitTopLevel(tokens[i + 2], ',').map(unquote)
         for (const from of leftIds) {
           for (const to of rightIds) {
+            if (options.maxEdges !== undefined && connections.length >= options.maxEdges) {
+              failResourceLimit(entry, `Minu diagram exceeds the ${options.maxEdges} edge limit.`)
+              break connectionExpansion
+            }
+            const newNodeCount = Number(!nodes.has(from)) + Number(from !== to && !nodes.has(to))
+            if (options.maxNodes !== undefined && nativeNodeCount() + newNodeCount > options.maxNodes) {
+              failResourceLimit(entry, `Minu diagram exceeds the ${options.maxNodes} native node limit.`)
+              break connectionExpansion
+            }
             connections.push({ from, to, operator: op, label, color: props.color, style: edgeStyle, propertyNames: Object.keys(props), properties: props, line: entry.line })
             ensureNode(nodes, from, currentGroupId(), entry.line)
             ensureNode(nodes, to, currentGroupId(), entry.line)
@@ -454,6 +497,10 @@ export function parseMinuDiagramSyntax(source: string, options: MinuDiagramParse
     for (const idPart of splitTopLevel(idSource, ',')) {
       const id = unquote(idPart)
       if (!id) continue
+      if (!nodes.has(id) && options.maxNodes !== undefined && nativeNodeCount() >= options.maxNodes) {
+        failResourceLimit(entry, `Minu diagram exceeds the ${options.maxNodes} native node limit.`)
+        break
+      }
       identities.push({ id, kind: 'node', line: entry.line, properties: props })
       nodes.set(id, { ...ensureNode(nodes, id, currentGroupId(), entry.line), ...propsToNode(id, props, currentGroupId(), entry.line) })
     }
