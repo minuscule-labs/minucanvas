@@ -126,6 +126,28 @@ const mindMapDocument = applyCanvasDocumentProfileLayout(value, mindMapCanvasPro
 
 See [`minu-diagram-syntax.md`](./minu-diagram-syntax.md) for the full syntax proposal and API details.
 
+### Importing Mermaid flowcharts
+
+Mermaid flowchart import is available from a separate asynchronous entry so it does not add the parser to normal canvas or Minu syntax imports:
+
+```ts
+const { compileMermaidSyntax } = await import('@dpklabs/minucanvas/mermaid')
+const result = await compileMermaidSyntax(`flowchart LR
+  A["Start"] --> B{Choose}
+  B -->|yes| C([Done])
+`)
+
+if (!result.success) {
+  showDiagnostics(result.diagnostics)
+  // Do not replace the current canvas.
+} else {
+  setValue(result.document)
+  canvasRef.current?.fitView()
+}
+```
+
+The result contains editable native canvas objects, not Mermaid SVG. Import is fail-closed: invalid or unsupported source returns diagnostics and no document. See [`mermaid-support.md`](./mermaid-support.md) for the supported subset, mappings, limits, and non-goals.
+
 ## Core editing
 
 - Select: click a shape, text, image, link, group, line, or arrow.

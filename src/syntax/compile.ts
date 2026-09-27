@@ -51,9 +51,10 @@ export function compileParsedMinuDiagram(parsed: ParsedMinuDiagram, options: Min
   const groupPadding = options.groupPadding ?? GROUP_PADDING
   const gridSize = options.gridSize === false ? null : options.gridSize ?? 20
   const layout = options.layout ?? parsed.layout ?? 'flow'
+  const edgeIds = allocateEdgeIds(parsed)
   const placement = layout === 'mindmap'
     ? { positions: new Map(parsed.nodes.map((node) => [node.id, origin])), edgePoints: new Map<string, Point[]>() }
-    : placeNodes(parsed, origin, nodeGap, rankGap, gridSize)
+    : placeNodes(parsed, origin, nodeGap, rankGap, gridSize, edgeIds)
 
   const nodes: CanvasNode[] = []
   const groupNodes: CanvasNode[] = []
@@ -79,7 +80,7 @@ export function compileParsedMinuDiagram(parsed: ParsedMinuDiagram, options: Min
   }
 
   const nodeLookup = new Map(nodes.map((node) => [node.id, node]))
-  const edges = parsed.connections.map((connection, index) => createEdge(connection, index, nodeLookup))
+  const edges = parsed.connections.map((connection, index) => createEdge(connection, edgeIds[index]!, nodeLookup, parsed.direction))
   const documentNodes = fitGroups([...groupNodes, ...nodes], groupPadding)
   const document = { nodes: documentNodes, edges }
   if (layout === 'mindmap') {
@@ -154,19 +155,26 @@ function sizeForNode(node: MinuDiagramNode, type: CanvasNode['type'], shape: Can
   return { width: dimension(node.width, DEFAULT_WIDTH), height: dimension(node.height, DEFAULT_HEIGHT) }
 }
 
-function createEdge(connection: MinuDiagramConnection, index: number, nodes: Map<string, CanvasNode>): CanvasEdge {
+function createEdge(
+  connection: MinuDiagramConnection,
+  id: string,
+  nodes: Map<string, CanvasNode>,
+  diagramDirection: ParsedMinuDiagram['direction'],
+): CanvasEdge {
   const { fromNode, toNode, fromEnd, toEnd } = edgeDirection(connection)
   const from = nodes.get(fromNode)
   const to = nodes.get(toNode)
-  const defaults = from && to ? defaultEdgeConnection(from, to) : undefined
-  const fromSide = defaults?.fromSide ?? 'right'
-  const toSide = defaults?.toSide ?? 'left'
+  const selfLoop = fromNode === toNode
+  const defaults = from && to && !selfLoop ? defaultEdgeConnection(from, to) : undefined
+  const loopAnchors = selfLoop ? selfLoopEdgeAnchors(diagramDirection) : undefined
+  const fromSide = loopAnchors?.from.side ?? defaults?.fromSide ?? 'right'
+  const toSide = loopAnchors?.to.side ?? defaults?.toSide ?? 'left'
   const partial: Partial<CanvasEdge> = {
-    id: `edge-${index + 1}`,
+    id,
     fromSide,
     toSide,
-    fromAnchor: defaults?.fromAnchor ?? { side: fromSide, position: 0.5 },
-    toAnchor: defaults?.toAnchor ?? { side: toSide, position: 0.5 },
+    fromAnchor: loopAnchors?.from ?? defaults?.fromAnchor ?? { side: fromSide, position: 0.5 },
+    toAnchor: loopAnchors?.to ?? defaults?.toAnchor ?? { side: toSide, position: 0.5 },
     fromEnd,
     toEnd,
   }
@@ -184,6 +192,20 @@ function edgeDirection(connection: MinuDiagramConnection): { fromNode: string; t
   return { fromNode: connection.from, toNode: connection.to, fromEnd: 'none', toEnd: 'arrow' }
 }
 
+function selfLoopEdgeAnchors(direction: ParsedMinuDiagram['direction']): {
+  from: NonNullable<CanvasEdge['fromAnchor']>
+  to: NonNullable<CanvasEdge['toAnchor']>
+} {
+  if (direction === 'left' || direction === 'right') {
+    return direction === 'right'
+      ? { from: { side: 'bottom', position: 0.2 }, to: { side: 'bottom', position: 0.8 } }
+      : { from: { side: 'bottom', position: 0.8 }, to: { side: 'bottom', position: 0.2 } }
+  }
+  return direction === 'down'
+    ? { from: { side: 'right', position: 0.1 }, to: { side: 'right', position: 0.9 } }
+    : { from: { side: 'right', position: 0.9 }, to: { side: 'right', position: 0.1 } }
+}
+
 interface FlowPlacement {
   positions: Map<string, { x: number; y: number }>
   edgePoints: Map<string, Point[]>
@@ -195,6 +217,7 @@ function placeNodes(
   nodeGap: number,
   rankGap: number,
   gridSize: number | null,
+  edgeIds: string[],
 ): FlowPlacement {
   // Mermaid's flowcharts delegate ordering and coordinate assignment to Dagre. In
   // particular, its crossing-minimization passes are much more reliable than
@@ -216,7 +239,7 @@ function placeNodes(
   for (const node of parsed.nodes) graph.setNode(node.id, estimatedNodeSize(node))
   parsed.connections.forEach((connection, index) => {
     const direction = edgeDirection(connection)
-    if (direction.fromNode !== direction.toNode) graph.setEdge(direction.fromNode, direction.toNode, {}, `edge-${index}`)
+    graph.setEdge(direction.fromNode, direction.toNode, {}, `edge-${index}`)
   })
   dagre.layout(graph)
 
@@ -243,12 +266,26 @@ function placeNodes(
     const direction = edgeDirection(connection)
     const edge = graph.edge({ v: direction.fromNode, w: direction.toNode, name: `edge-${index}` }) as { points?: Point[] } | undefined
     if (!edge?.points?.length) return
-    edgePoints.set(`edge-${index + 1}`, edge.points.map((point) => ({
+    edgePoints.set(edgeIds[index]!, edge.points.map((point) => ({
       x: snap(origin.x + point.x - minX),
       y: snap(origin.y + point.y - minY),
     })))
   })
   return { positions, edgePoints }
+}
+
+function allocateEdgeIds(parsed: ParsedMinuDiagram): string[] {
+  const occupied = new Set([...parsed.nodes.map((node) => node.id), ...parsed.groups.map((group) => group.id)])
+  const ids: string[] = []
+  let suffix = 1
+  for (let index = 0; index < parsed.connections.length; index += 1) {
+    while (occupied.has(`edge-${suffix}`)) suffix += 1
+    const id = `edge-${suffix}`
+    occupied.add(id)
+    ids.push(id)
+    suffix += 1
+  }
+  return ids
 }
 
 function estimatedNodeSize(node: MinuDiagramNode): { width: number; height: number } {
