@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { CanvasStyleToolbar, CanvasToolbar, MinuCanvas } from '../src/index'
 import { compileMinuDiagramSyntax, defaultCanvasShortcuts } from '../src/index'
+import { compileMermaidSyntax } from '../src/mermaid'
 import type { CanvasHandle, CanvasShapeTheme, CanvasThemeMode, CanvasTool, JsonCanvasDocument } from '../src/index'
 import '../src/theme/theme.css'
 import lightThemeUrl from '../src/theme/themes/light.css?url'
@@ -12,6 +13,8 @@ const THEME_URLS: Record<Exclude<ThemeChoice, 'base'>, string> = {
   light: lightThemeUrl,
   dark: darkThemeUrl,
 }
+
+type DiagramFormat = 'minu' | 'mermaid'
 
 const SAMPLE_DIAGRAM_SYNTAX = `diagram "Auth flow" {
   direction right
@@ -28,6 +31,13 @@ const SAMPLE_DIAGRAM_SYNTAX = `diagram "Auth flow" {
   Valid > Error: no [style: dashed]
   Error > Login
 }`
+
+const SAMPLE_MERMAID_SYNTAX = `flowchart LR
+  User([User]) --> Login["Login form"]
+  Login --> Valid{Valid?}
+  Valid -->|yes| Dashboard([Dashboard])
+  Valid -. no .-> Error["Show error"]
+  Error --> Login`
 
 const INITIAL_CANVAS: JsonCanvasDocument = {
   nodes: [
@@ -113,6 +123,7 @@ function themeMode(choice: ThemeChoice): CanvasThemeMode {
 
 export default function App() {
   const canvasRef = useRef<CanvasHandle>(null)
+  const importRequest = useRef(0)
   const [document, setDocument] = useState<JsonCanvasDocument>(INITIAL_CANVAS)
   const [theme, setTheme] = useState<ThemeChoice>('base')
   const [shapeTheme, setShapeTheme] = useState<CanvasShapeTheme>('outline')
@@ -120,8 +131,10 @@ export default function App() {
   const [snapToGrid, setSnapToGrid] = useState(true)
   const [tool, setTool] = useState<CanvasTool>('select')
   const [selected, setSelected] = useState({ nodeIds: [] as string[], edgeIds: [] as string[] })
+  const [diagramFormat, setDiagramFormat] = useState<DiagramFormat>('minu')
   const [diagramSource, setDiagramSource] = useState(SAMPLE_DIAGRAM_SYNTAX)
   const [diagramDiagnostics, setDiagramDiagnostics] = useState<string[]>([])
+  const [isImporting, setIsImporting] = useState(false)
 
   const activeThemeUrl = theme === 'base' ? null : THEME_URLS[theme]
   const serialized = useMemo(() => JSON.stringify(document, null, 2), [document])
@@ -130,12 +143,32 @@ export default function App() {
     return URL.createObjectURL(file)
   }
 
-  function handleImportDiagramSyntax() {
-    const result = compileMinuDiagramSyntax(diagramSource)
+  async function handleImportDiagramSyntax() {
+    const request = ++importRequest.current
+    setIsImporting(true)
+    const result = diagramFormat === 'mermaid'
+      ? await compileMermaidSyntax(diagramSource)
+      : compileMinuDiagramSyntax(diagramSource, { strict: true })
+    if (request !== importRequest.current) return
+
+    setIsImporting(false)
+    setDiagramDiagnostics(result.diagnostics.map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}${diagnostic.line ? ` (line ${diagnostic.line})` : ''}`))
+    const failed = 'success' in result
+      ? !result.success
+      : result.diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+    if (failed || !('document' in result)) return
+
     setDocument(result.document)
     setSelected({ nodeIds: [], edgeIds: [] })
-    setDiagramDiagnostics(result.diagnostics.map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}${diagnostic.line ? ` (line ${diagnostic.line})` : ''}`))
     requestAnimationFrame(() => canvasRef.current?.fitView())
+  }
+
+  function selectDiagramFormat(format: DiagramFormat) {
+    importRequest.current += 1
+    setIsImporting(false)
+    setDiagramFormat(format)
+    setDiagramSource(format === 'mermaid' ? SAMPLE_MERMAID_SYNTAX : SAMPLE_DIAGRAM_SYNTAX)
+    setDiagramDiagnostics([])
   }
 
   return (
@@ -222,15 +255,26 @@ export default function App() {
           </article>
           <article>
             <h2>Diagram syntax</h2>
+            <label>
+              Format
+              <select value={diagramFormat} onChange={(event) => selectDiagramFormat(event.target.value as DiagramFormat)}>
+                <option value="minu">Minu</option>
+                <option value="mermaid">Mermaid flowchart</option>
+              </select>
+            </label>
             <textarea
               className="diagram-source"
               value={diagramSource}
-              onChange={(event) => setDiagramSource(event.target.value)}
+              onChange={(event) => {
+                importRequest.current += 1
+                setIsImporting(false)
+                setDiagramSource(event.target.value)
+              }}
               spellCheck={false}
             />
             <div className="diagram-source__actions">
-              <button onClick={handleImportDiagramSyntax}>Import syntax</button>
-              <button onClick={() => setDiagramSource(SAMPLE_DIAGRAM_SYNTAX)}>Reset sample</button>
+              <button onClick={() => void handleImportDiagramSyntax()} disabled={isImporting}>{isImporting ? 'Importing…' : `Import ${diagramFormat}`}</button>
+              <button onClick={() => selectDiagramFormat(diagramFormat)}>Reset sample</button>
             </div>
             {diagramDiagnostics.length > 0 ? (
               <ul className="diagram-diagnostics">

@@ -35,6 +35,7 @@ export default defineConfig({
       entry: {
         index: resolve(__dirname, 'src/index.tsx'),
         syntax: resolve(__dirname, 'src/syntax/index.ts'),
+        mermaid: resolve(__dirname, 'src/mermaid/index.ts'),
       },
       name: 'MinuCanvas',
       formats: ['es', 'cjs'],

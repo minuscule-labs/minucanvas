@@ -1,6 +1,6 @@
 {
   "name": "@dpklabs/minucanvas",
-  "version": "0.7.3",
+  "version": "0.9.0",
   "description": "Reusable React canvas editor built around JSON Canvas for simple diagrams and extensible app canvases",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -17,12 +17,18 @@
       "import": "./dist/syntax.js",
       "require": "./dist/syntax.cjs"
     },
+    "./mermaid": {
+      "types": "./dist/mermaid.d.ts",
+      "import": "./dist/mermaid.js",
+      "require": "./dist/mermaid.cjs"
+    },
     "./theme.css": "./dist/theme.css",
     "./themes/light.css": "./dist/themes/light.css",
     "./themes/dark.css": "./dist/themes/dark.css"
   },
   "files": [
-    "dist"
+    "dist",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "sideEffects": [
     "*.css",
@@ -36,6 +42,9 @@
     "prepare": "npm run build",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
+    "spike:mermaid:node": "node scripts/mermaid-parser-spike/verify-node.mjs",
+    "spike:mermaid:browser": "node scripts/mermaid-parser-spike/verify-browser.mjs",
+    "spike:mermaid": "npm run spike:mermaid:node && npm run spike:mermaid:browser",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "version:patch": "npm version patch --no-git-tag-version",
@@ -61,6 +70,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.4.1",
     "jsdom": "^26.1.0",
+    "mermaid-parser-bundle": "0.2.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.8.3",
