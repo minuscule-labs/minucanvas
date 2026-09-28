@@ -107,10 +107,38 @@ direction sideways`, { strict: true })
     expect(parsed.connections).toHaveLength(1)
   })
 
+  it('rejects empty connection operands in both strict and permissive modes', () => {
+    for (const strict of [false, true]) {
+      for (const source of ['A > ,', ', > B']) {
+        const parsed = parseMinuDiagramSyntax(source, { strict })
+        expect(parsed.diagnostics).toContainEqual(expect.objectContaining({ code: 'malformed_connection', line: 1 }))
+        expect(parsed.connections).toEqual([])
+        expect(parsed.nodes).toEqual([])
+      }
+    }
+  })
+
+  it('enforces optional source, graph, edge, and nesting limits while parsing', () => {
+    const sourceLimit = parseMinuDiagramSyntax('A > B', { maxSourceLength: 2 })
+    const nodeLimit = parseMinuDiagramSyntax('A,B > C,D', { maxNodes: 2 })
+    const edgeLimit = parseMinuDiagramSyntax('A,B > C,D', { maxEdges: 2 })
+    const nestingLimit = parseMinuDiagramSyntax('Outer {\nInner {\nA\n}\n}', { maxNesting: 1 })
+
+    expect(sourceLimit.diagnostics[0]).toMatchObject({ code: 'resource_limit' })
+    expect(sourceLimit.nodes).toEqual([])
+    expect(nodeLimit.diagnostics).toContainEqual(expect.objectContaining({ code: 'resource_limit' }))
+    expect(nodeLimit.nodes.length).toBeLessThanOrEqual(2)
+    expect(edgeLimit.diagnostics).toContainEqual(expect.objectContaining({ code: 'resource_limit' }))
+    expect(edgeLimit.connections).toHaveLength(2)
+    expect(nestingLimit.diagnostics).toContainEqual(expect.objectContaining({ code: 'resource_limit' }))
+  })
+
   it('rejects malformed strict statements without adding their artifacts', () => {
     const cases = [
       ['A >', 'malformed_connection'],
       ['A > > B', 'malformed_connection'],
+      ['A > ,', 'malformed_connection'],
+      [', > B', 'malformed_connection'],
       ['Unquoted node name', 'unsupported_statement'],
       ['A [shape card]', 'invalid_properties'],
       ['A [shape: card', 'invalid_properties'],

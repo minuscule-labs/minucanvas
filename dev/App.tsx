@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { CanvasStyleToolbar, CanvasToolbar, MinuCanvas } from '../src/index'
-import { compileMinuDiagramSyntax, defaultCanvasShortcuts } from '../src/index'
-import { compileMermaidSyntax } from '../src/mermaid'
+import { defaultCanvasShortcuts } from '../src/index'
+import { compileDiagramSyntax } from '../src/mermaid'
 import type { CanvasHandle, CanvasShapeTheme, CanvasThemeMode, CanvasTool, JsonCanvasDocument } from '../src/index'
 import '../src/theme/theme.css'
 import lightThemeUrl from '../src/theme/themes/light.css?url'
@@ -14,7 +14,7 @@ const THEME_URLS: Record<Exclude<ThemeChoice, 'base'>, string> = {
   dark: darkThemeUrl,
 }
 
-type DiagramFormat = 'minu' | 'mermaid'
+type DiagramFormat = 'auto' | 'minu' | 'mermaid'
 
 const SAMPLE_DIAGRAM_SYNTAX = `diagram "Auth flow" {
   direction right
@@ -131,7 +131,7 @@ export default function App() {
   const [snapToGrid, setSnapToGrid] = useState(true)
   const [tool, setTool] = useState<CanvasTool>('select')
   const [selected, setSelected] = useState({ nodeIds: [] as string[], edgeIds: [] as string[] })
-  const [diagramFormat, setDiagramFormat] = useState<DiagramFormat>('minu')
+  const [diagramFormat, setDiagramFormat] = useState<DiagramFormat>('auto')
   const [diagramSource, setDiagramSource] = useState(SAMPLE_DIAGRAM_SYNTAX)
   const [diagramDiagnostics, setDiagramDiagnostics] = useState<string[]>([])
   const [isImporting, setIsImporting] = useState(false)
@@ -146,17 +146,12 @@ export default function App() {
   async function handleImportDiagramSyntax() {
     const request = ++importRequest.current
     setIsImporting(true)
-    const result = diagramFormat === 'mermaid'
-      ? await compileMermaidSyntax(diagramSource)
-      : compileMinuDiagramSyntax(diagramSource, { strict: true })
+    const result = await compileDiagramSyntax(diagramSource, { format: diagramFormat, strict: true })
     if (request !== importRequest.current) return
 
     setIsImporting(false)
     setDiagramDiagnostics(result.diagnostics.map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}${diagnostic.line ? ` (line ${diagnostic.line})` : ''}`))
-    const failed = 'success' in result
-      ? !result.success
-      : result.diagnostics.some((diagnostic) => diagnostic.severity === 'error')
-    if (failed || !('document' in result)) return
+    if (!result.success) return
 
     setDocument(result.document)
     setSelected({ nodeIds: [], edgeIds: [] })
@@ -258,6 +253,7 @@ export default function App() {
             <label>
               Format
               <select value={diagramFormat} onChange={(event) => selectDiagramFormat(event.target.value as DiagramFormat)}>
+                <option value="auto">Auto-detect</option>
                 <option value="minu">Minu</option>
                 <option value="mermaid">Mermaid flowchart</option>
               </select>

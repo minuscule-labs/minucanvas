@@ -2,7 +2,23 @@
 
 MinuCanvas can compile a documented Mermaid flowchart subset into editable native JSON Canvas nodes, edges, and groups. This is source import, not SVG rendering or source synchronization.
 
-The optional API is isolated in its own package entry and is asynchronous:
+The optional API is isolated in its own package entry and is asynchronous. Services that accept both Minu and Mermaid can use `compileDiagramSyntax()` to auto-detect the format, while callers needing an explicit override can pass `format: 'minu'` or `format: 'mermaid'`:
+
+```ts
+import { compileDiagramSyntax } from '@dpklabs/minucanvas/mermaid'
+
+const result = await compileDiagramSyntax(source) // format defaults to 'auto'
+if (result.success) {
+  console.log(`Detected ${result.format}`)
+  setValue(result.document)
+} else {
+  showDiagnostics(result.diagnostics)
+}
+```
+
+Auto mode recognizes complete Mermaid header lines (`graph` or `flowchart`, optionally followed by a supported direction), then validates other input as Minu in strict mode. This preserves connections whose node IDs are `graph` or `flowchart`, such as `graph > End` and `flowchart > End`, without treating them as headers. If a Minu diagram uses a bare first-line node ID `graph` or `flowchart` as a header, pass `format: 'minu'` explicitly.
+
+For Mermaid-only callers, the dedicated function remains available:
 
 ```ts
 import { compileMermaidSyntax } from '@dpklabs/minucanvas/mermaid'
@@ -77,7 +93,7 @@ Diagnostics include line and column when the parser or source inspection provide
 
 ## Limits
 
-Defaults are enforced before parsing or layout:
+`compileDiagramSyntax()` applies the same defaults to both Minu and Mermaid input. Mermaid-only helpers retain these defaults, while direct Minu parse/compile helpers accept the same optional limits when supplied. Minu parsing stops edge expansion as soon as a budget is exceeded.
 
 | Limit | Default |
 | --- | ---: |

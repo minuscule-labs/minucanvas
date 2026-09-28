@@ -19,6 +19,7 @@ export type MinuDiagramDiagnosticCode =
   | 'unknown_reference'
   | 'invalid_group_reference'
   | 'containment_cycle'
+  | 'resource_limit'
 
 export interface MinuDiagramDiagnostic {
   severity: MinuDiagramDiagnosticSeverity
@@ -34,6 +35,11 @@ export interface MinuDiagramDiagnostic {
 export interface MinuDiagramParseOptions {
   /** Reject ambiguous or unsupported statements instead of treating them as bare node IDs. */
   strict?: boolean | undefined
+  /** Optional resource bounds for untrusted source. */
+  maxSourceLength?: number | undefined
+  maxNodes?: number | undefined
+  maxEdges?: number | undefined
+  maxNesting?: number | undefined
 }
 
 export interface MinuDiagramNode {
